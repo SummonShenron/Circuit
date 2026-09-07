@@ -1,0 +1,48 @@
+.workflow-card-menu-wrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.workflow-card-menu-trigger {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.workflow-card-menu-trigger:hover {
+  background: #edf5ef;
+  color: #24433b;
+}
+
+.workflow-card-menu {
+  position: absolute;
+  z-index: 5;
+  top: 34px;
+  right: 0;
+  min-width: 110px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid #cbd9ce;
+  border-radius: 4px;
+  box-shadow: 0 8px 20px rgba(38, 67, 53, .16);
+}
+
+.workflow-card-menu span {
+  display: block;
+  padding: 7px 8px;
+  color: #36594c;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.workflow-card-menu span:hover {
+  background: #edf5ef;
+}
+
+.workflow-card-menu span:last-child {
+  color: #aa4a3e;
+}

@@ -1,0 +1,10 @@
+.copilot-blade {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.copilot-messages {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

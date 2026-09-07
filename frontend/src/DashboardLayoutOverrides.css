@@ -1,0 +1,26 @@
+@media (max-width: 700px) {
+  .dashboard-body {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-content,
+  .dashboard-connections,
+  .dashboard-secrets {
+    grid-column: 1;
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .dashboard-content {
+    grid-row: 1;
+  }
+
+  .dashboard-connections {
+    grid-row: 2;
+  }
+
+  .dashboard-secrets {
+    grid-row: 3;
+  }
+}
