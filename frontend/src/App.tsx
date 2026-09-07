@@ -60,18 +60,8 @@ import { ConnectionPicker } from "./components/ConnectionPicker";
 import { CopilotBlade } from "./components/CopilotBlade";
 import { blocks, configs } from "./editorCatalog";
 import type { Data, FlowNode, HelpTopic, Kind, Proposal, RunResult, Status, Stored, Variable, WorkflowInput, WorkflowPatchProposal } from "./editorTypes";
+import { getApiUrl } from "./apiConfig";
 
-const getApiUrl = () => {
-  if (typeof window === 'undefined') return "http://127.0.0.1:8010/api";
-  const hostname = window.location.hostname;
-  if (hostname === "localhost" || hostname === "127.0.0.1") {
-    return "http://127.0.0.1:8010/api";
-  }
-  if (hostname === "circutbuilder.com" || hostname.endsWith(".circutbuilder.com")) {
-    return "https://circut-1tw3.onrender.com/api";
-  }
-  return "http://127.0.0.1:8010/api";
-};
 const API = getApiUrl();
 const MODELS = ["gemini-3.6-flash", "gemini-1.5-flash"];
 type RunHistoryEntry = RunResult & { id: string; startedAt: string; durationMs: number; status: "completed" | "failed" };

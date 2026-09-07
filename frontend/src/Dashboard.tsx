@@ -5,8 +5,9 @@ import "./Dashboard.css";
 import "./DashboardOverrides.css";
 import "./DashboardLayoutOverrides.css";
 import "./RunHistory.css";
+import { getApiUrl } from "./apiConfig";
 
-const API = "http://127.0.0.1:8010/api";
+const API = getApiUrl();
 
 type WorkflowSummary = {
   id: string;
@@ -46,15 +47,22 @@ export default function Dashboard({ onOpen, onCreate }: DashboardProps) {
   useEffect(() => {
     void (async () => {
       try {
+        console.log(`[Dashboard] Fetching workflows from: ${API}`);
         const response = await fetch(`${API}/workflows`);
-        if (!response.ok) throw new Error("Could not load workflows");
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`[Dashboard] Failed to load workflows: ${response.status} ${response.statusText}`, errorText);
+          throw new Error(`Failed to load workflows (${response.status}): ${response.statusText}`);
+        }
         setWorkflows(await response.json());
         const secretResponse = await fetch(`${API}/secrets`);
         if (secretResponse.ok) setSecrets(await secretResponse.json());
         const connectionResponse = await fetch(`${API}/connections`);
         if (connectionResponse.ok) setConnections(await connectionResponse.json());
       } catch (reason) {
-        setError(reason instanceof Error ? reason.message : "Could not load workflows");
+        const errorMsg = reason instanceof Error ? reason.message : "Could not load workflows";
+        console.error(`[Dashboard] Error:`, reason);
+        setError(errorMsg);
       } finally {
         setLoading(false);
       }
