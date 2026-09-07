@@ -5,7 +5,7 @@ import csv
 import io
 import xml.etree.ElementTree as ET
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunsplit
 
 import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -176,13 +176,32 @@ async def run_llm(node: WorkflowNode, context: dict[str, Any]) -> dict[str, Any]
         for match in TEMPLATE_PATTERN.finditer(config.prompt)
         if read_path(context, match.group(1)) is None
     ]
-    if missing_paths:
+    skipped_paths = []
+    failed_node_ids = {
+        event["node_id"]
+        for event in context.get("latest_run", {}).get("trace", [])
+        if event.get("status") == "failed"
+    }
+    workflow_node_ids = {
+        item["id"]
+        for item in context.get("workflow", {}).get("nodes", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    for path in missing_paths:
+        segments = normalize_template_path(path)
+        source_id = segments[1] if len(segments) > 1 and isinstance(segments[1], str) else None
+        if source_id in workflow_node_ids and source_id not in failed_node_ids:
+            skipped_paths.append(path)
+    unresolved_paths = [path for path in missing_paths if path not in skipped_paths]
+    if unresolved_paths:
         available_outputs = ", ".join(sorted(context.get("outputs", {}).keys())) or "none"
         raise ValueError(
             f"LLM node '{node.label}' could not resolve template reference(s): "
-            + ", ".join(f"{{{{{path}}}}}" for path in missing_paths)
+            + ", ".join(f"{{{{{path}}}}}" for path in unresolved_paths)
             + f". Available node outputs: {available_outputs}"
         )
+    if skipped_paths:
+        logger.info("LLM node skipped unavailable conditional references node_id=%s paths=%s", node.id, skipped_paths)
     prompt = resolve_template(config.prompt, context)
     if not isinstance(prompt, str) or not prompt.strip():
         raise ValueError("LLM node prompt must not be empty")
@@ -327,6 +346,9 @@ async def run_erragent(node: WorkflowNode, context: dict[str, Any], connections:
     incident_id = resolve_template(config.incident_id, context) if config.incident_id else None
     if not isinstance(endpoint, str) or not endpoint.strip():
         raise ValueError("ErrAgent requires an endpoint or ERRAGENT_API_URL")
+    parsed_endpoint = urlparse(endpoint)
+    if parsed_endpoint.hostname == "www.erragent.onrender.com":
+        endpoint = urlunsplit((parsed_endpoint.scheme, "erragent.onrender.com", parsed_endpoint.path, parsed_endpoint.query, parsed_endpoint.fragment))
     if not isinstance(goal, str) or not goal.strip():
         raise ValueError("ErrAgent requires a goal")
     headers = {"Content-Type": "application/json"}
@@ -368,8 +390,11 @@ async def run_erragent(node: WorkflowNode, context: dict[str, Any], connections:
             "available_secret_names": available_secret_names,
         },
     }
-    async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
-        response = await client.post(endpoint, headers=headers, json=payload)
+    try:
+        async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
+            response = await client.post(endpoint, headers=headers, json=payload)
+    except httpx.ConnectError as error:
+        raise ValueError(f"ErrAgent bridge could not establish TLS connection to {endpoint}. Check the production API hostname and certificate.") from error
     if response.status_code >= 400:
         raise ValueError(f"ErrAgent request failed (HTTP {response.status_code}): {response.text[:500]}")
     try:

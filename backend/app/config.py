@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     adzuna_api_key: str | None = None
     jooble_api_key: str | None = None
     joobq_api_key: str | None = None
-    erragent_api_url: str = "https://www.erragent.onrender.com/api/v1/circuit/architect"
+    erragent_api_url: str = "https://erragent.onrender.com/api/v1/circuit/architect"
     erragent_api_key: str | None = None
     mongo_workflow_uri: str | None = None
     api_allowed_hosts: list[str] = []

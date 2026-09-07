@@ -290,6 +290,21 @@ function VariablePicker({
   onInsert: (token: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const handleInsert = (token: string) => {
+    const activeElement = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+    if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+      const start = activeElement.selectionStart || 0;
+      const end = activeElement.selectionEnd || 0;
+      const currentValue = activeElement.value;
+      const newValue = currentValue.slice(0, start) + token + currentValue.slice(end);
+      activeElement.value = newValue;
+      activeElement.selectionStart = activeElement.selectionEnd = start + token.length;
+      activeElement.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      onInsert(token);
+    }
+    setOpen(false);
+  };
   return (
     <div className="variable-picker">
       <button
@@ -310,8 +325,7 @@ function VariablePicker({
                   type="button"
                   key={variable.token}
                   onClick={() => {
-                    onInsert(variable.token);
-                    setOpen(false);
+                    handleInsert(variable.token);
                   }}
                 >
                   <strong>{variable.label}</strong>
