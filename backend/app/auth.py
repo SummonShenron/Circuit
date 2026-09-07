@@ -4,7 +4,7 @@ import logging
 import jwt
 from fastapi import Header, HTTPException, status
 
-from app.config import get_settings
+from .config import get_settings
 
 logger = logging.getLogger(__name__)
 

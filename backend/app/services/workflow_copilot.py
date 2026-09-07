@@ -6,11 +6,11 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
-from app.config import get_settings
-from app.models.workflow import WorkflowCreate, WorkflowProposal
-from app.services.api_catalog import search_connectors
-from app.services.llm import GoogleFlashModel, response_text
-from app.state.copilot_state import WorkflowCopilotState
+from ..config import get_settings
+from ..models.workflow import WorkflowCreate, WorkflowProposal
+from ..services.api_catalog import search_connectors
+from ..services.llm import GoogleFlashModel, response_text
+from ..state.copilot_state import WorkflowCopilotState
 
 logger = logging.getLogger(__name__)
 llm = GoogleFlashModel(get_settings())

@@ -7,15 +7,15 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pymongo import ReturnDocument
 from dotenv import dotenv_values
 
-from app.database import Database
-from app.repositories.connections import ConnectionRepository
-from app.repositories.workflows import WorkflowRepository
-from app.repositories.workflow_runs import WorkflowRunRepository
-from app.repositories.secrets import SecretRepository
-from app.services.secrets import SecretService
-from app.config import get_settings
-from app.services.workflow_engine import run_workflow
-from app.models.workflow import NodeType, ScheduleNodeConfig
+from ..database import Database
+from ..repositories.connections import ConnectionRepository
+from ..repositories.workflows import WorkflowRepository
+from ..repositories.workflow_runs import WorkflowRunRepository
+from ..repositories.secrets import SecretRepository
+from ..services.secrets import SecretService
+from ..config import get_settings
+from ..services.workflow_engine import run_workflow
+from ..models.workflow import NodeType, ScheduleNodeConfig
 
 logger = logging.getLogger(__name__)
 SCHEDULER_TICK_SECONDS = 15

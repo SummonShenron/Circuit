@@ -5,10 +5,10 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import get_settings
-from app.database import Database
-from app.logging_config import configure_logging
-from app.services.scheduler import run_scheduler
+from .config import get_settings
+from .database import Database
+from .logging_config import configure_logging
+from .services.scheduler import run_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +41,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from app.api.workflows import router as workflows_router
-from app.api.connections import router as connections_router
-from app.api.secrets import router as secrets_router
+from ..api.workflows import router as workflows_router
+from ..api.connections import router as connections_router
+from ..api.secrets import router as secrets_router
 
 app.include_router(workflows_router, prefix=settings.api_prefix)
 app.include_router(connections_router, prefix=settings.api_prefix)

@@ -3,7 +3,7 @@ from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app.models.workflow import (
+from ..models.workflow import (
     Workflow,
     WorkflowNode,
     NodeType,
@@ -22,9 +22,9 @@ from app.models.workflow import (
     MongoDbNodeConfig,
     TEMPLATE_PATTERN,
 )
-from app.config import get_settings
-from app.repositories.connections import ConnectionRepository
-from app.repositories.secrets import SecretRepository
+from ..config import get_settings
+from ..repositories.connections import ConnectionRepository
+from ..repositories.secrets import SecretRepository
 
 logger = logging.getLogger(__name__)
 

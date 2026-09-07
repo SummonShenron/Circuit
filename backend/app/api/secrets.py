@@ -2,13 +2,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from app.auth import get_current_user_id
-from app.config import get_settings
-from app.database import Database
-from app.main_dependencies import get_database
-from app.models.secret import Secret, SecretCreate
-from app.repositories.secrets import SecretRepository
-from app.services.secrets import SecretService
+from ..auth import get_current_user_id
+from ..config import get_settings
+from ..database import Database
+from ..main_dependencies import get_database
+from ..models.secret import Secret, SecretCreate
+from ..repositories.secrets import SecretRepository
+from ..services.secrets import SecretService
 
 router = APIRouter(prefix="/secrets", tags=["secrets"])
 DatabaseDependency = Annotated[Database, Depends(get_database)]

@@ -9,9 +9,9 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 
-from app.config import Settings
-from app.models.connection import ConnectionDocument
-from app.repositories.connections import ConnectionRepository
+from ..config import Settings
+from ..models.connection import ConnectionDocument
+from ..repositories.connections import ConnectionRepository
 
 logger = logging.getLogger(__name__)
 GOOGLE_WORKSPACE_SCOPES = [

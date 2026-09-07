@@ -2,8 +2,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from app.database import Database
-from app.models.workflow import RunWorkflowResponse
+from ..database import Database
+from ..models.workflow import RunWorkflowResponse
 
 
 class WorkflowRunRepository:

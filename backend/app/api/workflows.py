@@ -5,11 +5,11 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status, Header
 from fastapi.responses import JSONResponse
-from app.config import get_settings
-from app.auth import get_current_user_id
-from app.database import Database
-from app.main_dependencies import get_database
-from app.models.workflow import (
+from ..config import get_settings
+from ..auth import get_current_user_id
+from ..database import Database
+from ..main_dependencies import get_database
+from ..models.workflow import (
     CopilotMessageRequest,
     CopilotMessageResponse,
     RunWorkflowRequest,
@@ -26,17 +26,17 @@ from app.models.workflow import (
     HttpResponseNodeConfig,
     validate_run_inputs,
 )
-from app.repositories.workflows import WorkflowRepository
-from app.repositories.workflow_runs import WorkflowRunRepository
-from app.repositories.connections import ConnectionRepository
-from app.services.workflow_engine import run_workflow
-from app.services.node_runners import run_github_repository
-from app.services.suggestions import suggest_template
-from app.services.workflow_copilot import create_workflow_copilot
-from app.services.scheduler import resolve_scheduled_inputs_for_owner
-from app.services.workflow_validation import validate_workflow_preflight
-from app.services.secrets import SecretService
-from app.repositories.secrets import SecretRepository
+from ..repositories.workflows import WorkflowRepository
+from ..repositories.workflow_runs import WorkflowRunRepository
+from ..repositories.connections import ConnectionRepository
+from ..services.workflow_engine import run_workflow
+from ..services.node_runners import run_github_repository
+from ..services.suggestions import suggest_template
+from ..services.workflow_copilot import create_workflow_copilot
+from ..services.scheduler import resolve_scheduled_inputs_for_owner
+from ..services.workflow_validation import validate_workflow_preflight
+from ..services.secrets import SecretService
+from ..repositories.secrets import SecretRepository
 from langchain_core.messages import HumanMessage, AIMessage
 
 logger = logging.getLogger(__name__)

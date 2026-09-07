@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 import logging
 
-from app.database import Database
-from app.models.workflow import Workflow, WorkflowCreate, WorkflowUpdate
+from ..database import Database
+from ..models.workflow import Workflow, WorkflowCreate, WorkflowUpdate
 
 logger = logging.getLogger(__name__)
 

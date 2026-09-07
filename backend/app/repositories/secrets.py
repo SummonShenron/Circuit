@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
-from app.database import Database
-from app.models.secret import Secret, SecretDocument
+from ..database import Database
+from ..models.secret import Secret, SecretDocument
 
 
 class SecretRepository:

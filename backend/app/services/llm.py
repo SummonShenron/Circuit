@@ -3,7 +3,7 @@ from typing import Any
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from app.config import Settings
+from ..config import Settings
 
 logger = logging.getLogger(__name__)
 

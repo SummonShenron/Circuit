@@ -5,14 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from app.config import get_settings
-from app.auth import get_current_user_id
-from app.database import Database
-from app.main_dependencies import get_database
-from app.models.connection import Connection, GitHubConnectionCreate, GoogleAuthorizationStart
-from app.repositories.connections import ConnectionRepository
-from app.services.google_oauth import GoogleCalendarOAuth
-from app.services.github_connection import GitHubConnectionService
+from ..config import get_settings
+from ..auth import get_current_user_id
+from ..database import Database
+from ..main_dependencies import get_database
+from ..models.connection import Connection, GitHubConnectionCreate, GoogleAuthorizationStart
+from ..repositories.connections import ConnectionRepository
+from ..services.google_oauth import GoogleCalendarOAuth
+from ..services.github_connection import GitHubConnectionService
 
 logger = logging.getLogger(__name__)
 

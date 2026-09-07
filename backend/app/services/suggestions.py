@@ -2,9 +2,9 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.config import get_settings
-from app.models.workflow import Workflow, node_output_keys
-from app.services.llm import GoogleFlashModel
+from ..config import get_settings
+from ..models.workflow import Workflow, node_output_keys
+from ..services.llm import GoogleFlashModel
 
 logger = logging.getLogger(__name__)
 llm = GoogleFlashModel(get_settings())

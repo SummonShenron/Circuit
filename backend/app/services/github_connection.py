@@ -3,9 +3,9 @@ import logging
 import httpx
 from cryptography.fernet import Fernet
 
-from app.config import Settings
-from app.models.connection import ConnectionDocument
-from app.repositories.connections import ConnectionRepository
+from ..config import Settings
+from ..models.connection import ConnectionDocument
+from ..repositories.connections import ConnectionRepository
 
 logger = logging.getLogger(__name__)
 

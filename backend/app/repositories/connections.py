@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
-from app.database import Database
-from app.models.connection import Connection, ConnectionDocument
+from ..database import Database
+from ..models.connection import Connection, ConnectionDocument
 
 
 class ConnectionRepository:

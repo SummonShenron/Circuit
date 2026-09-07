@@ -4,7 +4,7 @@ import asyncio
 
 from langgraph.graph import END, START, StateGraph
 
-from app.models.workflow import (
+from ..models.workflow import (
     ExecutionContext,
     NodeType,
     RunWorkflowResponse,
@@ -13,8 +13,8 @@ from app.models.workflow import (
     WorkflowNode,
     ScheduleNodeConfig,
 )
-from app.services.node_runners import read_path, run_node, run_repeat_until
-from app.repositories.connections import ConnectionRepository
+from ..services.node_runners import read_path, run_node, run_repeat_until
+from ..repositories.connections import ConnectionRepository
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.models.workflow import (
+from ..models.workflow import (
     ConditionNodeConfig,
     GitHubRepositoryNodeConfig,
     GoogleDriveNodeConfig,
@@ -40,14 +40,14 @@ from app.models.workflow import (
     WorkflowNode,
     normalize_template_path,
 )
-from app.config import get_settings
+from ..config import get_settings
 
-from app.services.llm import GoogleFlashModel, response_text
-from app.repositories.connections import ConnectionRepository
-from app.services.google_oauth import GoogleCalendarOAuth
-from app.services.github_connection import GitHubConnectionService
-from app.repositories.secrets import SecretRepository
-from app.services.secrets import SecretService
+from ..services.llm import GoogleFlashModel, response_text
+from ..repositories.connections import ConnectionRepository
+from ..services.google_oauth import GoogleCalendarOAuth
+from ..services.github_connection import GitHubConnectionService
+from ..repositories.secrets import SecretRepository
+from ..services.secrets import SecretService
 
 logger = logging.getLogger(__name__)
 llm = GoogleFlashModel(get_settings())

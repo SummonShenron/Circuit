@@ -1,8 +1,8 @@
 from cryptography.fernet import Fernet
 
-from app.config import Settings
-from app.models.secret import SecretCreate, SecretDocument
-from app.repositories.secrets import SecretRepository
+from ..config import Settings
+from ..models.secret import SecretCreate, SecretDocument
+from ..repositories.secrets import SecretRepository
 
 
 class SecretService:
