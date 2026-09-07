@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { ClerkProvider, SignInButton, SignedIn, SignedOut, useAuth } from '@clerk/clerk-react'
 import './index.css'
 import App from './App.tsx'
+import { isCircuitApiUrl } from './apiConfig'
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
 
@@ -22,8 +23,8 @@ function TokenFetchBridge({ children }: { children: ReactNode }) {
     }
     window.fetch = async (input, init) => {
       const url = typeof input === 'string' ? input : input instanceof Request ? input.url : input.toString()
-      const isLocalApi = url.startsWith('http://127.0.0.1:8010/') || url.startsWith('http://localhost:8010/')
-      if (!isLocalApi) return originalFetch(input, init)
+      // Add Bearer token only for Circuit API URLs
+      if (!isCircuitApiUrl(url)) return originalFetch(input, init)
       const requestWithToken = async (token: string | null) => {
         const headers = new Headers(init?.headers)
         if (token) headers.set('Authorization', `Bearer ${token}`)
