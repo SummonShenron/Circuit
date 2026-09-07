@@ -41,9 +41,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from ..api.workflows import router as workflows_router
-from ..api.connections import router as connections_router
-from ..api.secrets import router as secrets_router
+from .api.workflows import router as workflows_router
+from .api.connections import router as connections_router
+from .api.secrets import router as secrets_router
 
 app.include_router(workflows_router, prefix=settings.api_prefix)
 app.include_router(connections_router, prefix=settings.api_prefix)
