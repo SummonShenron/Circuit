@@ -11,7 +11,9 @@ from typing import Any
 import httpx
 
 
-DEFAULT_API_URL = "http://127.0.0.1:8010"
+DEFAULT_API_URL = os.getenv("CIRCUIT_API_URL", "http://127.0.0.1:8010")
+# Cloud backend option
+CLOUD_API_URL = "https://circut-1tw3.onrender.com"
 DEFAULT_EVENT_NAME = "chat-message"
 MAX_HISTORY_MESSAGES = 20
 

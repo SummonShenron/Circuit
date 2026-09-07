@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     google_api_key: str | None = None
     google_client_id: str | None = None
     google_client_secret: str | None = None
-    google_redirect_uri: str = "http://127.0.0.1:8010/api/connections/google/callback"
+    google_redirect_uri: str | None = None  # Will be set dynamically
     resend_api_key: str | None = None
     token_encryption_key: str | None = None
     dev_user_id: str = "local-dev-user"
@@ -30,12 +30,20 @@ class Settings(BaseSettings):
     erragent_api_key: str | None = None
     mongo_workflow_uri: str | None = None
     api_allowed_hosts: list[str] = []
-    cors_origins: list[str] = ["http://127.0.0.1:8090"]
+    cors_origins: list[str] = ["http://127.0.0.1:8090", "https://circutbuilder.com"]
+    backend_url: str | None = None  # Cloud backend URL
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[2] / ".env",
         env_file_encoding="utf-8",
     )
+
+    def get_google_redirect_uri(self) -> str:
+        """Get Google redirect URI based on environment."""
+        if self.google_redirect_uri:
+            return self.google_redirect_uri
+        # Default to local if not specified
+        return "http://127.0.0.1:8010/api/connections/google/callback"
 
 
 @lru_cache
