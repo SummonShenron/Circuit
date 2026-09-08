@@ -7,7 +7,8 @@ export function getApiUrl(): string {
     return "http://127.0.0.1:8010/api";
   }
   
-  if (hostname === "circutbuilder.com" || hostname.endsWith(".circutbuilder.com")) {
+  // Support both www.circuitworkflow.com and circuitworkflow.com
+  if (hostname.includes("circuitworkflow.com")) {
     return "https://circut-1tw3.onrender.com/api";
   }
   
