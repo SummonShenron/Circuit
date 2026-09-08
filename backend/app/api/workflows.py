@@ -111,7 +111,7 @@ async def delete_workflow(workflow_id: str, repository: RepositoryDependency, us
 async def preflight_workflow(
     workflow_id: str, repository: RepositoryDependency, database: DatabaseDependency, user_id: UserDependency
 ) -> dict[str, Any]:
-    from app.models.workflow import WorkflowPrefightResponse, PrefightIssueResponse
+    from ..models.workflow import WorkflowPrefightResponse, PrefightIssueResponse
     
     workflow = await get_workflow_or_404(repository, workflow_id, user_id)
     logger.info("validating workflow workflow_id=%s", workflow_id)
