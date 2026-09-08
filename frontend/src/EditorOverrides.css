@@ -6,26 +6,46 @@
   transform: translateX(-50%);
   width: min(760px, calc(100vw - 32px));
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr auto auto;
   align-items: start;
   gap: 8px 12px;
-  padding: 11px 13px;
+  padding: 12px 14px;
   color: #7d3028;
   background: #fff7f5;
-  border: 1px solid #e8cbc6;
-  border-radius: 5px;
-  box-shadow: 0 8px 20px rgba(91, 49, 42, .12);
+  border: 2px solid #e8714b;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(91, 49, 42, .18);
   font-size: 11px;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
 }
 
 .editor-alert strong {
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5b312a;
 }
 
 .editor-alert span {
-  line-height: 1.4;
+  line-height: 1.5;
   overflow-wrap: anywhere;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 10px;
+  color: #6b2f27;
+  background: rgba(255, 255, 255, 0.5);
+  padding: 4px 6px;
+  border-radius: 3px;
 }
 
 .editor-alert button {
@@ -37,6 +57,12 @@
   background: transparent;
   border: 0;
   cursor: pointer;
+  transition: color 0.2s, transform 0.2s;
+}
+
+.editor-alert button:hover {
+  color: #7d3028;
+  transform: scale(1.1);
 }
 
 .save-control:disabled {

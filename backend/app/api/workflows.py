@@ -87,8 +87,17 @@ async def get_workflow(workflow_id: str, repository: RepositoryDependency, user_
 async def update_workflow(
     workflow_id: str, payload: WorkflowUpdate, repository: RepositoryDependency, user_id: UserDependency
 ) -> Workflow:
-    workflow = await get_workflow_or_404(repository, workflow_id, user_id)
-    return await repository.update(workflow, payload)
+    try:
+        workflow = await get_workflow_or_404(repository, workflow_id, user_id)
+        updated = await repository.update(workflow, payload)
+        logger.info(f"Workflow {workflow_id} updated successfully")
+        return updated
+    except ValueError as e:
+        logger.error(f"Workflow update validation error for {workflow_id}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Workflow update error for {workflow_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update workflow: {str(e)}")
 
 
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)

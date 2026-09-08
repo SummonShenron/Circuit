@@ -982,16 +982,18 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
         const detail = Array.isArray(error.detail)
           ? error.detail.map((item) => `${item.loc?.join(".") ?? "workflow"}: ${item.msg ?? "invalid value"}`).join("; ")
           : error.detail;
-        throw new Error(detail ?? "Could not save workflow");
+        const errorMessage = detail ?? "Could not save workflow";
+        console.error(`[Workflow Save Failed] Status: ${response.status}`, errorMessage);
+        throw new Error(errorMessage);
       }
       setNotice("Saved to MongoDB Atlas");
       setSaveConfirmed(true);
       window.setTimeout(() => setSaveConfirmed(false), 1800);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not save workflow";
+      console.error("[Save Error]", message, error);
       setEditorError(message);
       setNotice("Save failed");
-      throw error;
     } finally {
       setSaving(false);
     }
@@ -1234,7 +1236,7 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
         </div>
       </header>
       {showConsole && <aside className="console-panel"><div className="console-heading"><strong>Workflow Console</strong><button className="icon-button" type="button" title="Close Console" onClick={() => setShowConsole(false)}><X size={16} /></button></div><p className="console-context">Calls the event-triggered workflow as a headless client.</p><div className="console-messages">{consoleMessages.length === 0 && <p className="console-empty">Send a message to test this workflow.</p>}{consoleMessages.map((item, index) => <p className={`console-message ${item.role}`} key={index}>{item.content}</p>)}{consoleSending && <p className="console-message assistant">Waiting for Circuit...</p>}</div>{consoleError && <p className="console-error">{consoleError}</p>}<div className="console-compose"><textarea value={consoleDraft} onChange={(event) => setConsoleDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendConsoleMessage(); } }} placeholder="Type a message..." rows={3} /><button className="run-button" type="button" onClick={() => void sendConsoleMessage()} disabled={consoleSending || !consoleDraft.trim()}>Send</button></div></aside>}
-      {editorError && <div className="editor-alert" role="alert"><strong>Could not save workflow</strong><span>{editorError}</span><button type="button" onClick={() => setEditorError("")} aria-label="Dismiss save error"><X size={16} /></button></div>}
+      {editorError && <div className="editor-alert" role="alert"><strong>⚠️ Save Error</strong><span>{editorError}</span><button type="button" onClick={() => { navigator.clipboard.writeText(editorError); setNotice("Error copied to clipboard"); }} title="Copy error message" aria-label="Copy error"><Braces size={14} /></button><button type="button" onClick={() => setEditorError("")} aria-label="Dismiss save error"><X size={16} /></button></div>}
       <section className={`workspace ${showCopilot ? "with-copilot" : ""}`}>
         <BlockLibrary blocks={blocks} helpMode={helpMode} renderIcon={(kind) => <Icon kind={kind} />} onAdd={add} onHelp={(topic, position) => { setHelpTopic(topic); setHelpPosition(position); }} getHelpTopic={(kind) => blockHelp[kind]}>
           <InputsPanel inputs={inputs} onChange={setInputs} />
