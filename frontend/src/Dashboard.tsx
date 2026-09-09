@@ -43,6 +43,7 @@ export default function Dashboard({ onOpen, onCreate }: DashboardProps) {
   const [runHistory, setRunHistory] = useState<WorkflowRun[]>([]);
   const [runHistoryLoading, setRunHistoryLoading] = useState(false);
   const [runHistoryError, setRunHistoryError] = useState("");
+  const [tutorialNotice, setTutorialNotice] = useState("");
 
   useEffect(() => {
     void (async () => {
@@ -130,6 +131,25 @@ export default function Dashboard({ onOpen, onCreate }: DashboardProps) {
     }
   };
 
+  const startTutorial = async (tutorial: "chat-assistant" | "routing", workflowName: string) => {
+    setTutorialNotice("");
+    if (!secrets.some((secret) => secret.name === "CHAT_TRIGGER_TOKEN")) {
+      setSecretName("CHAT_TRIGGER_TOKEN");
+      setSecretError("Create CHAT_TRIGGER_TOKEN below before starting the tutorial. Use any private value you will remember for testing.");
+      document.querySelector(".dashboard-secrets")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    try {
+      const response = await fetch(`${API}/workflows`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: workflowName, graph: { nodes: [], edges: [] } }) });
+      if (!response.ok) throw new Error("Could not start tutorial");
+      const workflow = await response.json() as WorkflowSummary;
+      window.sessionStorage.setItem("circuit-tutorial", tutorial);
+      onCreate(workflow.id);
+    } catch (reason) {
+      setTutorialNotice(reason instanceof Error ? reason.message : "Could not start tutorial");
+    }
+  };
+
   const deleteWorkflow = async (workflow: WorkflowSummary) => {
     if (!window.confirm(`Delete ${workflow.name}?`)) return;
     const response = await fetch(`${API}/workflows/${workflow.id}`, { method: "DELETE" });
@@ -164,6 +184,7 @@ export default function Dashboard({ onOpen, onCreate }: DashboardProps) {
     <div className="dashboard-body">
       <section className="dashboard-content"><div className="dashboard-heading"><div><span>WORKFLOWS</span><h1>Build, run, and improve.</h1><p>Your automations are saved to your workspace and ready to pick up where you left off.</p></div></div>
       {error && <p className="dashboard-error">{error}</p>}
+      <section className="tutorial-card"><div><span>START HERE</span><h2>Guided tutorials</h2><p>Build a chat assistant end to end, then branch it with a router, a condition, and two specialist models.</p></div><div className="tutorial-card-actions"><button className="create-workflow" onClick={() => void startTutorial("chat-assistant", "Chat Assistant Tutorial")}><Workflow size={16} /> Chat assistant</button><button className="create-workflow" onClick={() => void startTutorial("routing", "Routing Tutorial")}><GitBranch size={16} /> Routing</button></div>{tutorialNotice && <p className="dashboard-error">{tutorialNotice}</p>}</section>
       {loading ? <p className="dashboard-empty">Loading workflows...</p> : workflows.length === 0 ? <section className="dashboard-empty"><Workflow size={28} /><strong>Start with a workflow</strong><span>Create a blank canvas, then connect blocks into an automation.</span><button className="create-workflow" onClick={() => void createWorkflow()}><FilePlus2 size={17} /> New workflow</button></section> : <section className="workflow-grid">{workflows.map((workflow) => <button className="workflow-card" key={workflow.id} onClick={() => onOpen(workflow.id)}><div className="workflow-card-top"><span className="workflow-card-icon"><Workflow size={18} /></span><span className="workflow-card-menu-wrap"><span className="workflow-card-menu-trigger" role="button" tabIndex={0} aria-label={`More options for ${workflow.name}`} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setOpenWorkflowMenu((current) => current === workflow.id ? null : workflow.id); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); setOpenWorkflowMenu((current) => current === workflow.id ? null : workflow.id); } }}><MoreHorizontal size={18} /></span>{openWorkflowMenu === workflow.id && <span className="workflow-card-menu" role="menu" onClick={(event) => event.stopPropagation()}><span role="menuitem" tabIndex={0} onClick={() => onOpen(workflow.id)}>Open</span><span role="menuitem" tabIndex={0} onClick={() => void openRunHistory(workflow)}>Run history</span><span role="menuitem" tabIndex={0} onClick={() => void deleteWorkflow(workflow)}>Delete</span></span>}</span></div><strong>{workflow.name}</strong><p>{workflow.description || "No description yet."}</p><div className="workflow-card-meta"><span><Play size={13} /> {workflow.graph.nodes.length} blocks</span><span><Clock3 size={13} /> {new Date(workflow.updated_at).toLocaleDateString()}</span></div></button>)}</section>}</section>
       <section className="dashboard-secrets"><div><span>SECRETS</span><h2>Personal API keys</h2><p>Values are encrypted and never displayed after saving. Use references like <code>{'{"$secret":"WEATHER_API_KEY"}'}</code> in scheduled inputs.</p></div><div className="secret-form"><input value={secretName} onChange={(event) => setSecretName(event.target.value.replace(/[^a-zA-Z0-9_]/g, "_"))} placeholder="WEATHER_API_KEY" /><input type="password" value={secretValue} onChange={(event) => setSecretValue(event.target.value)} placeholder="Secret value" autoComplete="new-password" /><button className="create-workflow" onClick={() => void saveSecret()}><KeyRound size={16} /> Save secret</button></div>{secretError && <p className="dashboard-error">{secretError}</p>}<div className="secret-list">{secrets.map((secret) => <div className="secret-row" key={secret.name}><span><KeyRound size={15} /> {secret.name}</span><button className="row-icon" title="Delete secret" onClick={() => void deleteSecret(secret.name)}><Trash2 size={15} /></button></div>)}</div></section>
       <section className="dashboard-connections"><div><span>CONNECTIONS</span><h2>Accounts and services</h2><p>Connect the accounts your workflows are allowed to use. Credentials are stored owner-scoped and encrypted.</p></div><div className="connection-actions"><button className="create-workflow" onClick={() => void connectGoogle()}><Link2 size={16} /> Connect Google Workspace</button><input value={githubName} onChange={(event) => setGithubName(event.target.value)} placeholder="GitHub connection name" /><input type="password" value={githubToken} onChange={(event) => setGithubToken(event.target.value)} placeholder="GitHub personal access token" autoComplete="new-password" /><button className="create-workflow" onClick={() => void connectGithub()} disabled={connectingGithub}><GitBranch size={16} /> {connectingGithub ? "Connecting..." : "Connect GitHub"}</button></div>{connectionError && <p className="dashboard-error">{connectionError}</p>}<div className="connection-list">{connections.map((connection) => <div className="connection-row" key={connection.id}><span><Link2 size={15} /> <strong>{connection.display_name}</strong><small>{connection.provider === "google_calendar" ? "Google Workspace" : "GitHub"}{connection.account_email ? ` - ${connection.account_email}` : ""}</small></span><button className="row-icon" title="Disconnect" onClick={() => void disconnectConnection(connection)}><X size={15} /></button></div>)}</div></section>

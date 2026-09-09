@@ -244,6 +244,37 @@ async def run_github_repository(node: WorkflowNode, context: dict[str, Any], con
         raise ValueError("GitHub owner and repository must resolve to text values")
     token = await GitHubConnectionService(get_settings()).access_token(connections, config.connection_id, owner_id)
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    if config.operation != "repository_context":
+        query = resolve_template(config.search_query, context)
+        if not isinstance(query, str):
+            query = str(query)
+        query = query.strip()
+        if not query:
+            raise ValueError("GitHub search requires a query")
+        search_type = "commits" if config.operation == "search_commits" else "issues"
+        qualifiers = f"repo:{owner}/{repository}"
+        if config.operation == "search_pull_requests":
+            qualifiers += " type:pr"
+        elif config.operation == "search_issues":
+            qualifiers += " type:issue"
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                f"https://api.github.com/search/{search_type}",
+                headers=headers,
+                params={"q": f"{query} {qualifiers}", "per_page": config.search_limit},
+            )
+        if response.status_code >= 400:
+            raise ValueError(f"GitHub search failed (HTTP {response.status_code}): {response.text[:500]}")
+        result = response.json()
+        items = result.get("items", []) if isinstance(result, dict) else []
+        return {
+            config.output_key: {
+                "operation": config.operation,
+                "query": query,
+                "total_count": result.get("total_count", len(items)) if isinstance(result, dict) else len(items),
+                "items": items[:config.search_limit],
+            }
+        }
     requested_paths = (["README.md"] if config.include_readme else []) + config.include_paths
     async with httpx.AsyncClient(timeout=20.0) as client:
         repository_response = await client.get(f"https://api.github.com/repos/{owner}/{repository}", headers=headers)

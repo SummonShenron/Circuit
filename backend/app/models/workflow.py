@@ -125,6 +125,9 @@ class GitHubRepositoryNodeConfig(BaseModel):
     owner: str
     repository: str
     connection_id: str = Field(min_length=1)
+    operation: Literal["repository_context", "search_pull_requests", "search_commits", "search_issues"] = "repository_context"
+    search_query: str = ""
+    search_limit: int = Field(default=10, ge=1, le=50)
     include_readme: bool = True
     auto_select_files: bool = True
     include_paths: list[str] = Field(default_factory=lambda: ["package.json", "pyproject.toml"])

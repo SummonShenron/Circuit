@@ -35,7 +35,7 @@ export const configs: Record<Kind, Record<string, unknown>> = {
   condition: { input_path: "", operator: "exists", value: null, logic: "and", conditions: [] },
   repeat_until: { input_path: "", operator: "exists", value: null, max_iterations: 3 },
   for_each: { items_path: "", item_key: "item", body_node_ids: [], result_key: "items", max_items: 25, continue_on_error: false },
-  github_repository: { owner: "", repository: "", connection_id: "", include_readme: true, auto_select_files: true, include_paths: ["package.json", "pyproject.toml"], max_files: 12, max_chars: 40000, output_key: "repository_context" },
+  github_repository: { owner: "", repository: "", connection_id: "", operation: "repository_context", search_query: "", search_limit: 10, include_readme: true, auto_select_files: true, include_paths: ["package.json", "pyproject.toml"], max_files: 12, max_chars: 40000, output_key: "repository_context" },
   resend_email: { from_email: "Patchy <patchy@sonicassistant.com>", to: "", subject: "", body: "", body_type: "text", output_key: "email_response" },
   google_drive: { name: "", content: "", mime_type: "text/plain", folder_id: "", file_id: "", connection_id: "", output_key: "drive_file" },
   google_drive_update: { file_id: "", content: "", mime_type: "text/plain", connection_id: "", output_key: "drive_file" },

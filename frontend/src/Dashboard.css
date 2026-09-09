@@ -169,6 +169,8 @@
     overflow:visible;
 }
 .dashboard-content { grid-column:1 / -1; grid-row:1; }
+.tutorial-card { display:flex; align-items:center; justify-content:space-between; gap:18px; margin:0 0 22px; padding:18px 20px; color:#24433b; background:#eaf4ed; border:1px solid #b9d3c0; border-radius:6px; }.tutorial-card span { color:#527166; font:10px 'DM Mono',monospace; text-transform:uppercase; }.tutorial-card h2 { margin:6px 0 4px; font:700 20px/1.1 Fraunces,serif; }.tutorial-card p { margin:0; color:#668278; font-size:12px; line-height:1.5; }
+.tutorial-card-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .dashboard-secrets { grid-column:1; grid-row:2; }
 .dashboard-connections { grid-column:2; grid-row:2; }
 .dashboard-heading { 

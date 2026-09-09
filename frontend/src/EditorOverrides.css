@@ -37,8 +37,14 @@
   color: #5b312a;
 }
 
-.editor-alert span {
+.editor-alert span,
+.editor-alert pre {
   line-height: 1.5;
+  min-width: 0;
+  max-height: min(240px, 35vh);
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: 'Monaco', 'Courier New', monospace;
   font-size: 10px;

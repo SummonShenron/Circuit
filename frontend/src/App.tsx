@@ -1,4 +1,4 @@
-import { useEffect, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import {
   addEdge,
   Background,
@@ -10,6 +10,7 @@ import {
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useNodesInitialized,
   useReactFlow,
   type Connection,
   type Edge,
@@ -47,6 +48,7 @@ import {
   PanelRight,
   Tag,
   Trash2,
+  Undo2,
   Workflow,
   X,
 } from "lucide-react";
@@ -62,6 +64,7 @@ import { CopilotBlade } from "./components/CopilotBlade";
 import { blocks, configs } from "./editorCatalog";
 import type { Data, FlowNode, HelpTopic, Kind, Proposal, RunResult, Status, Stored, Variable, WorkflowInput, WorkflowPatchProposal } from "./editorTypes";
 import { getApiUrl } from "./apiConfig";
+import { isTutorialId, tutorials, type Tutorial, type TutorialId } from "./tutorials";
 
 const API = getApiUrl();
 const MODELS = ["gemini-3.6-flash", "gemini-1.5-flash"];
@@ -284,31 +287,58 @@ function WorkflowBlock({ data }: NodeProps<FlowNode>) {
 }
 const nodeTypes = { workflow: WorkflowBlock };
 
+type TextField = HTMLInputElement | HTMLTextAreaElement;
+
+// React tracks the previous value on the DOM node, so the native setter is required
+// for a programmatic edit to reach onChange.
+function setFieldValue(element: TextField, value: string) {
+  const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+  if (setter) setter.call(element, value);
+  else element.value = value;
+  element.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 function VariablePicker({
   variables,
   onInsert,
+  transformToken,
 }: {
   variables: Variable[];
   onInsert: (token: string) => void;
+  transformToken?: (token: string) => string;
 }) {
   const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const caretRef = useRef<{ element: TextField; start: number; end: number } | null>(null);
+  const captureCaret = () => {
+    const element = document.activeElement as TextField | null;
+    if (!element || (element.tagName !== "INPUT" && element.tagName !== "TEXTAREA")) return;
+    const scope = containerRef.current?.closest("label, .mapping-row") ?? null;
+    if (scope && !scope.contains(element)) return;
+    caretRef.current = {
+      element,
+      start: element.selectionStart ?? element.value.length,
+      end: element.selectionEnd ?? element.value.length,
+    };
+  };
   const handleInsert = (token: string) => {
-    const activeElement = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
-    if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
-      const start = activeElement.selectionStart || 0;
-      const end = activeElement.selectionEnd || 0;
-      const currentValue = activeElement.value;
-      const newValue = currentValue.slice(0, start) + token + currentValue.slice(end);
-      activeElement.value = newValue;
-      activeElement.selectionStart = activeElement.selectionEnd = start + token.length;
-      activeElement.dispatchEvent(new Event('input', { bubbles: true }));
+    const text = transformToken ? transformToken(token) : token;
+    const caret = caretRef.current;
+    if (caret && caret.element.isConnected) {
+      const { element, start, end } = caret;
+      setFieldValue(element, `${element.value.slice(0, start)}${text}${element.value.slice(end)}`);
+      const position = start + text.length;
+      element.focus();
+      element.setSelectionRange(position, position);
+      caretRef.current = { element, start: position, end: position };
     } else {
       onInsert(token);
     }
     setOpen(false);
   };
   return (
-    <div className="variable-picker">
+    <div className="variable-picker" ref={containerRef} onMouseDown={captureCaret}>
       <button
         className="variable-trigger"
         type="button"
@@ -430,8 +460,11 @@ function variablesFor(
 }
 
 function TemplateWarnings({ value, variables }: { value: string; variables: Variable[] }) {
-  const tokens = [...value.matchAll(/{{\s*([a-zA-Z_][\w-]*(?:(?:\.[a-zA-Z_][\w-]*)|(?:\[\d+\]))*)\s*}}/g)].map((match) => `{{${match[1]}}}`);
-  const invalid = [...new Set(tokens.filter((token) => !variables.some((variable) => variable.token === token)))];
+  const tokens = [...value.matchAll(/{{\s*([a-zA-Z_][\w-]*(?:(?:\.[a-zA-Z_][\w-]*)|(?:\[\d+\]))*)\s*}}/g)].map((match) => match[1]);
+  const paths = variables.map((variable) => variable.token.slice(2, -2).trim());
+  // A token may drill into an available output, so prefixes count as available too.
+  const available = (token: string) => paths.some((path) => token === path || token.startsWith(`${path}.`) || token.startsWith(`${path}[`));
+  const invalid = [...new Set(tokens.filter((token) => !available(token)))].map((token) => `{{${token}}}`);
   return invalid.length ? <span className="template-warning">Unavailable here: {invalid.join(", ")}</span> : null;
 }
 
@@ -439,7 +472,9 @@ function JsonField({ label, value, variables, workflowId, nodeId, onChange }: { 
   const [raw, setRaw] = useState(value ? JSON.stringify(value, null, 2) : "");
   const [error, setError] = useState("");
   const validate = (next: string) => { setRaw(next); if (!next.trim()) { setError(""); onChange(null); return; } try { const parsed = JSON.parse(next); if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error(); setError(""); onChange(parsed as Record<string, unknown>); } catch { setError("Enter a JSON object") } };
-  return <label>{label}<textarea className="json-input" rows={4} value={raw} onChange={(event) => setRaw(event.target.value)} onBlur={(event) => validate(event.target.value)} />{error && <span className="field-error">{error}</span>}<TemplateWarnings value={raw} variables={variables} /><VariablePicker variables={variables} onInsert={(token) => validate(`${raw}${token}`)} /><SuggestPrompt workflowId={workflowId} nodeId={nodeId} value={raw} onApply={validate} /></label>;
+  // Commit valid JSON while typing so inserted variables persist without needing a blur.
+  const track = (next: string) => { setRaw(next); if (!next.trim()) return; try { const parsed = JSON.parse(next); if (parsed && !Array.isArray(parsed) && typeof parsed === "object") { setError(""); onChange(parsed as Record<string, unknown>); } } catch { /* wait for valid JSON */ } };
+  return <label>{label}<textarea className="json-input" rows={4} value={raw} onChange={(event) => track(event.target.value)} onBlur={(event) => validate(event.target.value)} />{error && <span className="field-error">{error}</span>}<TemplateWarnings value={raw} variables={variables} /><VariablePicker variables={variables} onInsert={(token) => validate(`${raw}${token}`)} /><SuggestPrompt workflowId={workflowId} nodeId={nodeId} value={raw} onApply={validate} /></label>;
 }
 
 function SuggestPrompt({ workflowId, nodeId, value, onApply }: { workflowId: string | null; nodeId: string; value: string; onApply: (value: string) => void }) {
@@ -730,11 +765,11 @@ function NodeForm({
     );
   }
   if (kind === "condition") return <ConditionForm config={config} variables={variables} onChange={onChange} />;
-  if (kind === "repeat_until") return <div className="node-form"><p className="form-hint">Continue loops back through work; Done exits; Limit handles exhausted attempts.</p><Field {...field("repeat_until.input_path")}><label>Check path<input value={String(config.input_path ?? "")} onChange={(event) => update("input_path", event.target.value)} placeholder="quality.passed" /><TemplateWarnings value={String(config.input_path ?? "")} variables={variables} /><VariablePicker variables={variables} onInsert={(token) => update("input_path", token.slice(2, -2))} /></label></Field><Field {...field("repeat_until.operator")}><label>Operator<select value={String(config.operator ?? "exists")} onChange={(event) => update("operator", event.target.value)}><option value="exists">Exists</option><option value="equals">Equals</option><option value="not_equals">Does not equal</option><option value="contains">Contains</option></select></label></Field>{config.operator !== "exists" && <Field {...field("repeat_until.value")}><label>Expected value<input value={String(config.value ?? "")} onChange={(event) => update("value", event.target.value)} /></label></Field>}<Field {...field("repeat_until.max_iterations")}><label>Maximum iterations<input type="number" min="1" max="20" value={Number(config.max_iterations ?? 3)} onChange={(event) => update("max_iterations", Number(event.target.value))} /></label></Field></div>;
+  if (kind === "repeat_until") return <div className="node-form"><p className="form-hint">Continue loops back through work; Done exits; Limit handles exhausted attempts.</p><Field {...field("repeat_until.input_path")}><label>Check path<input value={String(config.input_path ?? "")} onChange={(event) => update("input_path", event.target.value)} placeholder="quality.passed" /><TemplateWarnings value={String(config.input_path ?? "")} variables={variables} /><VariablePicker variables={variables} transformToken={(token) => token.slice(2, -2)} onInsert={(token) => update("input_path", token.slice(2, -2))} /></label></Field><Field {...field("repeat_until.operator")}><label>Operator<select value={String(config.operator ?? "exists")} onChange={(event) => update("operator", event.target.value)}><option value="exists">Exists</option><option value="equals">Equals</option><option value="not_equals">Does not equal</option><option value="contains">Contains</option></select></label></Field>{config.operator !== "exists" && <Field {...field("repeat_until.value")}><label>Expected value<input value={String(config.value ?? "")} onChange={(event) => update("value", event.target.value)} /></label></Field>}<Field {...field("repeat_until.max_iterations")}><label>Maximum iterations<input type="number" min="1" max="20" value={Number(config.max_iterations ?? 3)} onChange={(event) => update("max_iterations", Number(event.target.value))} /></label></Field></div>;
   if (kind === "for_each") { const selected = (config.body_node_ids as string[] | undefined) ?? []; return <div className="node-form"><p className="form-hint">Select the nodes run once for each item.</p><Field {...field("for_each.items_path")}><label>Items path<input value={String(config.items_path ?? "")} onChange={(event) => update("items_path", event.target.value)} placeholder="input.documents" /><TemplateWarnings value={String(config.items_path ?? "")} variables={variables} /></label></Field><Field {...field("for_each.body_node_ids")}><div className="body-selector">{bodyOptions.map((node) => <label key={node.id}><input type="checkbox" checked={selected.includes(node.id)} onChange={(event) => update("body_node_ids", event.target.checked ? [...selected, node.id] : selected.filter((id) => id !== node.id))} /> {node.data.label}</label>)}</div></Field><Field {...field("for_each.item_key")}><label>Item key<input value={String(config.item_key ?? "item")} onChange={(event) => update("item_key", event.target.value)} /></label></Field><Field {...field("for_each.result_key")}><label>Result key<input value={String(config.result_key ?? "items")} onChange={(event) => update("result_key", event.target.value)} /></label></Field><Field {...field("for_each.max_items")}><label>Maximum items<input type="number" min="1" max="100" value={Number(config.max_items ?? 25)} onChange={(event) => update("max_items", Number(event.target.value))} /></label></Field></div>; }
   if (kind === "schedule") { const days = (config.days_of_week as number[] | undefined) ?? []; return <div className="node-form"><p className="form-hint">The scheduler checks enabled schedules every 15 seconds. Event mode is configuration-only until an event source is connected.</p><label className="required-input"><input type="checkbox" checked={Boolean(config.enabled ?? true)} onChange={(event) => update("enabled", event.target.checked)} /> Enabled</label><label>Trigger mode<select value={String(config.trigger_mode ?? "schedule")} onChange={(event) => update("trigger_mode", event.target.value)}><option value="schedule">Scheduled timer</option><option value="event">External event</option></select></label>{config.trigger_mode === "event" ? <label>Event name<input value={String(config.event_name ?? "")} onChange={(event) => update("event_name", event.target.value)} placeholder="github.issue.created" /></label> : <><label>Frequency<select value={String(config.interval ?? "hourly")} onChange={(event) => update("interval", event.target.value)}><option value="5_minutes">Every 5 minutes</option><option value="hourly">Every hour</option><option value="daily">Every day</option><option value="weekly">Weekly</option></select></label>{config.interval === "weekly" && <label>Every N weeks<input type="number" min="1" max="52" value={Number(config.weeks_interval ?? 1)} onChange={(event) => update("weeks_interval", Number(event.target.value))} /></label>}<label>Days of week<select multiple value={days.map(String)} onChange={(event) => update("days_of_week", Array.from(event.target.selectedOptions).map((option) => Number(option.value)))}><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select></label></>}<JsonField label="Trigger inputs" value={(config.input_values as Record<string, unknown>) ?? {}} variables={variables} workflowId={workflowId} nodeId={nodeId} onChange={(value) => update("input_values", value ?? {})} /></div>; }
   const returnTo = workflowId ? `${window.location.origin}/?workflow=${encodeURIComponent(workflowId)}` : window.location.origin;
-  if (kind === "github_repository") return <div className="node-form"><p className="form-hint">Reads metadata, README, and selected safe text files. Secrets and binary files are excluded.</p><label>Owner<input value={String(config.owner ?? "")} onChange={(event) => update("owner", event.target.value)} placeholder="octocat" /></label><label>Repository<input value={String(config.repository ?? "")} onChange={(event) => update("repository", event.target.value)} placeholder="hello-world" /></label><ConnectionPicker value={String(config.connection_id ?? "")} returnTo={returnTo} onChange={(connectionId) => update("connection_id", connectionId || undefined)} /><label className="required-input"><input type="checkbox" checked={Boolean(config.include_readme ?? true)} onChange={(event) => update("include_readme", event.target.checked)} /> Include README.md</label><label className="required-input"><input type="checkbox" checked={Boolean(config.auto_select_files ?? true)} onChange={(event) => update("auto_select_files", event.target.checked)} /> Auto-select important source files</label><label>Extra file paths<textarea rows={3} value={((config.include_paths as string[] | undefined) ?? []).join("\n")} onChange={(event) => update("include_paths", event.target.value.split("\n").map((path) => path.trim()).filter(Boolean))} placeholder={"package.json\npyproject.toml"} /></label><label>Maximum files<input type="number" min="1" max="25" value={Number(config.max_files ?? 12)} onChange={(event) => update("max_files", Number(event.target.value))} /></label><label>Maximum context characters<input type="number" min="1000" max="100000" step="1000" value={Number(config.max_chars ?? 40000)} onChange={(event) => update("max_chars", Number(event.target.value))} /></label><label>Output key<input value={String(config.output_key ?? "repository_context")} onChange={(event) => update("output_key", event.target.value)} /></label></div>;
+  if (kind === "github_repository") return <div className="node-form"><p className="form-hint">Read repository context or search pull requests, commits, and issues through the connected GitHub account.</p><label>Owner<input value={String(config.owner ?? "")} onChange={(event) => update("owner", event.target.value)} placeholder="octocat" /></label><label>Repository<input value={String(config.repository ?? "")} onChange={(event) => update("repository", event.target.value)} placeholder="hello-world" /></label><ConnectionPicker value={String(config.connection_id ?? "")} returnTo={returnTo} onChange={(connectionId) => update("connection_id", connectionId || undefined)} /><label>Operation<select value={String(config.operation ?? "repository_context")} onChange={(event) => update("operation", event.target.value)}><option value="repository_context">Repository context</option><option value="search_pull_requests">Search pull requests</option><option value="search_commits">Search commits</option><option value="search_issues">Search issues</option></select></label>{config.operation !== "repository_context" ? <><label>Search query<input value={String(config.search_query ?? "")} onChange={(event) => update("search_query", event.target.value)} placeholder="bug fix, author:octocat, is:open" /><span className="form-hint">Additional repository and type filters are added automatically.</span><TemplateWarnings value={String(config.search_query ?? "")} variables={variables} /></label><label>Result limit<input type="number" min="1" max="50" value={Number(config.search_limit ?? 10)} onChange={(event) => update("search_limit", Number(event.target.value))} /></label></> : <><label className="required-input"><input type="checkbox" checked={Boolean(config.include_readme ?? true)} onChange={(event) => update("include_readme", event.target.checked)} /> Include README.md</label><label className="required-input"><input type="checkbox" checked={Boolean(config.auto_select_files ?? true)} onChange={(event) => update("auto_select_files", event.target.checked)} /> Auto-select important source files</label><label>Extra file paths<textarea rows={3} value={((config.include_paths as string[] | undefined) ?? []).join("\n")} onChange={(event) => update("include_paths", event.target.value.split("\n").map((path) => path.trim()).filter(Boolean))} placeholder={"package.json\npyproject.toml"} /></label><label>Maximum files<input type="number" min="1" max="25" value={Number(config.max_files ?? 12)} onChange={(event) => update("max_files", Number(event.target.value))} /></label><label>Maximum context characters<input type="number" min="1000" max="100000" step="1000" value={Number(config.max_chars ?? 40000)} onChange={(event) => update("max_chars", Number(event.target.value))} /></label></>}<label>Output key<input value={String(config.output_key ?? "repository_context")} onChange={(event) => update("output_key", event.target.value)} /></label></div>;
   if (kind === "resend_email") return <div className="node-form"><p className="form-hint">Sends through Resend. Set RESEND_API_KEY in the backend environment before running.</p><label>From<input value={String(config.from_email ?? "")} onChange={(event) => update("from_email", event.target.value)} placeholder="Workflow Builder &lt;updates@example.com&gt;" /></label><label>To<input value={String(config.to ?? "")} onChange={(event) => update("to", event.target.value)} placeholder="person@example.com, team@example.com" /><TemplateWarnings value={String(config.to ?? "")} variables={variables} /><VariablePicker variables={variables} onInsert={(token) => update("to", `${String(config.to ?? "")}${token}`)} /></label><label>Subject<input value={String(config.subject ?? "")} onChange={(event) => update("subject", event.target.value)} /></label><label>Body<textarea rows={7} value={String(config.body ?? "")} onChange={(event) => update("body", event.target.value)} /><TemplateWarnings value={String(config.body ?? "")} variables={variables} /><VariablePicker variables={variables} onInsert={(token) => update("body", `${String(config.body ?? "")}${token}`)} /></label><label>Body format<select value={String(config.body_type ?? "text")} onChange={(event) => update("body_type", event.target.value)}><option value="text">Plain text</option><option value="html">HTML</option></select></label><label>Output key<input value={String(config.output_key ?? "email_response")} onChange={(event) => update("output_key", event.target.value)} /></label><Field {...field("resend_email.retry")}><RetryFields value={config.retry as Record<string, unknown> | undefined} onChange={(retry) => update("retry", retry)} /></Field></div>;
   if (kind === "google_drive") return <div className="node-form"><p className="form-hint">Creates a new file or updates an existing file with text content using Google Drive.</p><Field {...field("google_drive.connection")}><ConnectionPicker value={String(config.connection_id ?? "")} returnTo={returnTo} onChange={(connectionId) => update("connection_id", connectionId || undefined)} /></Field><label>File name<input value={String(config.name ?? "")} onChange={(event) => update("name", event.target.value)} placeholder="weekly-report.md" /></label><label>Content<textarea rows={8} value={String(config.content ?? "")} onChange={(event) => update("content", event.target.value)} /><TemplateWarnings value={String(config.content ?? "")} variables={variables} /><VariablePicker variables={variables} onInsert={(token) => update("content", `${String(config.content ?? "")}${token}`)} /></label><label>MIME type<input value={String(config.mime_type ?? "text/plain")} onChange={(event) => update("mime_type", event.target.value)} placeholder="text/markdown" /></label><label>Folder ID (optional)<input value={String(config.folder_id ?? "")} onChange={(event) => update("folder_id", event.target.value || undefined)} /></label><label>Existing file ID (optional)<input value={String(config.file_id ?? "")} onChange={(event) => update("file_id", event.target.value || undefined)} /></label><label>Output key<input value={String(config.output_key ?? "drive_file")} onChange={(event) => update("output_key", event.target.value)} /></label><Field {...field("google_drive.retry")}><RetryFields value={config.retry as Record<string, unknown> | undefined} onChange={(retry) => update("retry", retry)} /></Field></div>;
   if (kind === "google_drive_update") return <div className="node-form"><p className="form-hint">Updates an existing Google Drive file. Find the file ID in its Drive URL.</p><Field {...field("google_drive.connection")}><ConnectionPicker value={String(config.connection_id ?? "")} returnTo={returnTo} onChange={(connectionId) => update("connection_id", connectionId || undefined)} /></Field><label>File ID<input value={String(config.file_id ?? "")} onChange={(event) => update("file_id", event.target.value)} placeholder="1abc..." /></label><label>Content<textarea rows={8} value={String(config.content ?? "")} onChange={(event) => update("content", event.target.value)} /><TemplateWarnings value={String(config.content ?? "")} variables={variables} /><VariablePicker variables={variables} onInsert={(token) => update("content", `${String(config.content ?? "")}${token}`)} /></label><label>MIME type<input value={String(config.mime_type ?? "text/plain")} onChange={(event) => update("mime_type", event.target.value)} placeholder="text/markdown" /></label><label>Output key<input value={String(config.output_key ?? "drive_file")} onChange={(event) => update("output_key", event.target.value)} /></label><Field {...field("google_drive.retry")}><RetryFields value={config.retry as Record<string, unknown> | undefined} onChange={(retry) => update("retry", retry)} /></Field></div>;
@@ -842,17 +877,25 @@ function InputsPanel({ inputs, onChange }: { inputs: WorkflowInput[]; onChange: 
   return <section className="workflow-inputs"><div className="panel-heading"><span>Inputs</span><button className="row-icon" type="button" title="Add input" onClick={add}><Plus size={14} /></button></div>{inputs.map((input, index) => <div className="input-row" key={`workflow-input-${index}`}><input value={input.key} aria-label="Input key" placeholder="key" onChange={(event) => update(index, { key: event.target.value.replace(/\W/g, "_") })} /><input value={input.label} aria-label="Input label" placeholder="Label" onChange={(event) => update(index, { label: event.target.value })} /><select value={input.type} aria-label="Input type" onChange={(event) => update(index, { type: event.target.value as WorkflowInput["type"] })}><option value="string">Text</option><option value="number">Number</option><option value="boolean">Yes/No</option></select><label className="required-input"><input type="checkbox" checked={input.required} onChange={(event) => update(index, { required: event.target.checked })} /> Required</label><button className="row-icon" type="button" title="Remove input" onClick={() => onChange(inputs.filter((_, inputIndex) => inputIndex !== index))}><Trash2 size={14} /></button></div>)}</section>;
 }
 
+function TutorialPanel({ tutorial, step, complete, onNext, onBack, onSkip, onOpenConsole }: { tutorial: Tutorial; step: number; complete: boolean; onNext: () => void; onBack: () => void; onSkip: () => void; onOpenConsole: () => void }) {
+  const steps = tutorial.steps;
+  const current = steps[step] ?? steps[steps.length - 1];
+  return <aside className="tutorial-panel" role="dialog" aria-label={tutorial.title}><div className="tutorial-panel-heading"><span><Sparkles size={16} /> {tutorial.title}</span><button className="icon-button" type="button" title="Skip tutorial" onClick={onSkip}><X size={16} /></button></div><div className="tutorial-progress">Step {step + 1} of {steps.length}</div><h2>{current.title}</h2><p>{current.body}</p><div className="tutorial-panel-actions"><button className="text-button" type="button" onClick={onBack} disabled={step === 0}>Back</button>{step === steps.length - 1 ? <button className="apply-proposal" type="button" onClick={onOpenConsole}>Open Console</button> : <button className="apply-proposal" type="button" onClick={onNext} disabled={!complete}>Next</button>}</div></aside>;
+}
+
 function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(starter);
   const [edges, setEdges, onEdgesChange] = useEdgesState(starterEdges);
   const [id, setId] = useState<string | null>(null);
   const [name, setName] = useState("Untitled workflow");
+  const [workflowLoaded, setWorkflowLoaded] = useState(false);
   const [inputs, setInputs] = useState<WorkflowInput[]>([]);
   const [selected, setSelected] = useState<string | null>("brief");
   const [notice, setNotice] = useState(() => new URLSearchParams(window.location.search).get("connection_error") ?? "");
   const [saveConfirmed, setSaveConfirmed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editorError, setEditorError] = useState("");
+  const [canUndo, setCanUndo] = useState(false);
   const [running, setRunning] = useState(false);
   const [executionNodeId, setExecutionNodeId] = useState<string | null>(null);
   const [hasExecutionError, setHasExecutionError] = useState(false);
@@ -876,8 +919,20 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
   const [isConnectingBlock, setIsConnectingBlock] = useState(false);
   const [showMobileLibrary, setShowMobileLibrary] = useState(false);
   const [showMobileInspector, setShowMobileInspector] = useState(false);
-  const { screenToFlowPosition } = useReactFlow();
+  const [tutorialId, setTutorialId] = useState<TutorialId | null>(() => {
+    const stored = window.sessionStorage.getItem("circuit-tutorial");
+    return isTutorialId(stored) ? stored : null;
+  });
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const [hasSaved, setHasSaved] = useState(false);
+  const canvasPanelRef = useRef<HTMLElement | null>(null);
+  const undoStack = useRef<Array<{ nodes: FlowNode[]; edges: Edge[] }>>([]);
+  const dragHistoryCaptured = useRef(false);
+  const { screenToFlowPosition, fitView } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
   const current = nodes.find((node) => node.id === selected);
+  const tutorial: Tutorial | null = tutorialId ? tutorials[tutorialId] : null;
+  const tutorialComplete = tutorial?.steps[tutorialStep]?.complete({ inputs, nodes, edges, hasSaved }) ?? true;
   const variables = current
     ? variablesFor(nodes, edges, current.id, inputs)
     : [];
@@ -901,6 +956,18 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
       })),
     },
   });
+  const pushUndo = () => {
+    undoStack.current = [...undoStack.current.slice(-49), { nodes, edges }];
+    setCanUndo(true);
+  };
+  const undo = () => {
+    const previous = undoStack.current.pop();
+    if (!previous) return;
+    setNodes(previous.nodes);
+    setEdges(previous.edges);
+    setCanUndo(undoStack.current.length > 0);
+    setNotice("Undid the last canvas change");
+  };
   useEffect(() => {
     void (async () => {
       try {
@@ -942,12 +1009,36 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
               animated: true,
             })),
           );
+          undoStack.current = [];
+          setCanUndo(false);
+          setWorkflowLoaded(true);
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => void fitView({ padding: 0.2, duration: 0 }));
+          });
         }
       } catch {
         setNotice("Could not reach the API");
       }
     })();
-  }, [setEdges, setNodes, workflowId]);
+  }, [fitView, setEdges, setNodes, workflowId]);
+  useEffect(() => {
+    if (!workflowLoaded || !nodesInitialized || nodes.length === 0) return;
+    const refit = window.setTimeout(() => {
+      void fitView({ padding: 0.2, duration: 0 });
+    }, 250);
+    return () => window.clearTimeout(refit);
+  }, [fitView, nodes.length, nodesInitialized, workflowLoaded]);
+  useEffect(() => {
+    if (!workflowLoaded || nodes.length === 0 || !canvasPanelRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      const size = entries[0]?.contentRect;
+      if (size && size.width > 0 && size.height > 0) {
+        void fitView({ padding: 0.2, duration: 0 });
+      }
+    });
+    observer.observe(canvasPanelRef.current);
+    return () => observer.disconnect();
+  }, [fitView, nodes.length, workflowLoaded]);
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(`workflow-run-history:${workflowId}`);
@@ -981,16 +1072,20 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
         body: JSON.stringify(payload()),
       });
       if (!response.ok) {
-        const error = (await response.json()) as { detail?: string | Array<{ loc?: Array<string | number>; msg?: string }> };
-        const detail = Array.isArray(error.detail)
-          ? error.detail.map((item) => `${item.loc?.join(".") ?? "workflow"}: ${item.msg ?? "invalid value"}`).join("; ")
-          : error.detail;
-        const errorMessage = detail ?? "Could not save workflow";
+        const responseText = await response.text();
+        let errorMessage = responseText || "Could not save workflow";
+        try {
+          const parsed = JSON.parse(responseText) as unknown;
+          errorMessage = typeof parsed === "string" ? parsed : JSON.stringify(parsed, null, 2);
+        } catch {
+          // Keep non-JSON server responses unchanged.
+        }
         console.error(`[Workflow Save Failed] Status: ${response.status}`, errorMessage);
         throw new Error(errorMessage);
       }
       setNotice("Saved to MongoDB Atlas");
       setSaveConfirmed(true);
+      setHasSaved(true);
       window.setTimeout(() => setSaveConfirmed(false), 1800);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not save workflow";
@@ -1002,6 +1097,7 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
     }
   };
   const add = (kind: Kind, position = { x: 260, y: 250 }) => {
+    pushUndo();
     const node: FlowNode = {
       id: `${kind}_${Date.now()}`,
       type: "workflow",
@@ -1040,6 +1136,7 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
       setNotice("Use each condition branch once and connect different blocks.");
       return;
     }
+    pushUndo();
     setEdges((all) =>
       addEdge(
         {
@@ -1063,6 +1160,17 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
     }
     setIsConnectingBlock(true);
     window.setTimeout(() => setIsConnectingBlock(false), 700);
+  };
+  const handleNodesChange = (changes: Parameters<typeof onNodesChange>[0]) => {
+    const startsDrag = changes.some((change) => change.type === "position" && change.dragging === true);
+    const endsDrag = changes.some((change) => change.type === "position" && change.dragging === false);
+    const structuralChange = changes.some((change) => change.type === "add" || change.type === "remove");
+    if ((startsDrag && !dragHistoryCaptured.current) || structuralChange) {
+      pushUndo();
+      dragHistoryCaptured.current = startsDrag;
+    }
+    if (endsDrag) dragHistoryCaptured.current = false;
+    onNodesChange(changes);
   };
   const run = async (values: Record<string, unknown>) => {
     if (!id) return;
@@ -1139,6 +1247,7 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
     setApplyingProposal(true);
     setEditorError("");
     try {
+      pushUndo();
       // Add positions to nodes that don't have them (ErrAgent doesn't provide positions)
       const patch = { ...proposal.patch };
       const currentMaxX = Math.max(...nodes.map(n => n.position.x), 0);
@@ -1181,6 +1290,7 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
     setNodes((all) => all.map((node) => node.id === selected ? { ...node, data: { ...node.data, ...data } } : node));
   };
   const applyProposal = (proposal: Proposal) => {
+    pushUndo();
     if (proposal.patch.add_inputs?.length) setInputs((items) => [...items, ...proposal.patch.add_inputs!.filter((input) => !items.some((existing) => existing.key === input.key))]);
     setNodes((items) => [
       ...items.map((node) => {
@@ -1215,6 +1325,13 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
     }
   };
   const currentProposal = proposalFromRun(runResult);
+  const closeTutorial = () => {
+    window.sessionStorage.removeItem("circuit-tutorial");
+    setTutorialId(null);
+  };
+  const nextTutorialStep = () => {
+    if (tutorialComplete && tutorial) setTutorialStep((step) => Math.min(step + 1, tutorial.steps.length - 1));
+  };
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -1227,6 +1344,9 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
           onChange={(event) => setName(event.target.value)}
         />
         <div className="topbar-actions">
+          <button className="icon-button undo-control" title="Undo last canvas change" aria-label="Undo last canvas change" onClick={undo} disabled={!canUndo}>
+            <Undo2 size={18} />
+          </button>
           <button
             className={`icon-button save-control ${saveConfirmed ? "save-confirmed" : ""}`}
             title={saveConfirmed ? "Saved" : "Save workflow"}
@@ -1252,7 +1372,8 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
         </div>
       </header>
       {showConsole && <aside className="console-panel"><div className="console-heading"><strong>Workflow Console</strong><button className="icon-button" type="button" title="Close Console" onClick={() => setShowConsole(false)}><X size={16} /></button></div><p className="console-context">Calls the event-triggered workflow as a headless client.</p><div className="console-messages">{consoleMessages.length === 0 && <p className="console-empty">Send a message to test this workflow.</p>}{consoleMessages.map((item, index) => <p className={`console-message ${item.role}`} key={index}>{item.content}</p>)}{consoleSending && <p className="console-message assistant">Waiting for Circuit...</p>}</div>{consoleError && <p className="console-error">{consoleError}</p>}<div className="console-compose"><textarea value={consoleDraft} onChange={(event) => setConsoleDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendConsoleMessage(); } }} placeholder="Type a message..." rows={3} /><button className="run-button" type="button" onClick={() => void sendConsoleMessage()} disabled={consoleSending || !consoleDraft.trim()}>Send</button></div></aside>}
-      {editorError && <div className="editor-alert" role="alert"><strong>⚠️ Save Error</strong><span>{editorError}</span><button type="button" onClick={() => { navigator.clipboard.writeText(editorError); setNotice("Error copied to clipboard"); }} title="Copy error message" aria-label="Copy error"><Braces size={14} /></button><button type="button" onClick={() => setEditorError("")} aria-label="Dismiss save error"><X size={16} /></button></div>}
+      {editorError && <div className="editor-alert" role="alert"><strong>⚠️ Save Error</strong><pre>{editorError}</pre><button type="button" onClick={() => { navigator.clipboard.writeText(editorError); setNotice("Error copied to clipboard"); }} title="Copy error message" aria-label="Copy error"><Braces size={14} /></button><button type="button" onClick={() => setEditorError("")} aria-label="Dismiss save error"><X size={16} /></button></div>}
+      {tutorial && <TutorialPanel tutorial={tutorial} step={tutorialStep} complete={tutorialComplete} onNext={nextTutorialStep} onBack={() => setTutorialStep((step) => Math.max(step - 1, 0))} onSkip={closeTutorial} onOpenConsole={() => { setShowConsole(true); closeTutorial(); }} />}
       <section className={`workspace ${showCopilot ? "with-copilot" : ""}`}>
         {(showMobileLibrary || showMobileInspector) && <div className="mobile-library-backdrop" onClick={() => { setShowMobileLibrary(false); setShowMobileInspector(false); }} />}
         <BlockLibrary className={showMobileLibrary ? "visible" : ""} blocks={blocks} helpMode={helpMode} renderIcon={(kind) => <Icon kind={kind} />} onAdd={add} onHelp={(topic, position) => { setHelpTopic(topic); setHelpPosition(position); }} getHelpTopic={(kind) => blockHelp[kind]}>
@@ -1263,6 +1384,7 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
         </BlockLibrary>
         <section
           className="canvas-panel"
+          ref={canvasPanelRef}
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event: DragEvent<HTMLDivElement>) => {
             event.preventDefault();
@@ -1276,16 +1398,25 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
           }}
         >
           <ReactFlow
+            key={`${workflowId}-${workflowLoaded ? "loaded" : "loading"}`}
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
-            onNodesChange={onNodesChange}
+            onNodesChange={handleNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={connect}
+            onInit={(instance) => {
+              window.setTimeout(() => void instance.fitView({ padding: 0.2, duration: 0 }), 300);
+            }}
+            panOnDrag={true}
+            panOnScroll={false}
+            zoomOnPinch
+            selectionOnDrag={false}
             onNodeClick={(event, node) => { if (helpMode) { setHelpTopic(blockHelp[node.data.kind]); setHelpPosition({ x: event.clientX, y: event.clientY }); } else setSelected(node.id); }}
             fitView
+            fitViewOptions={{ padding: 0.2 }}
           >
-            <Background gap={18} size={1} color="#d8e3df" />
+            <Background gap={18} size={1} color="#bfd1c8" />
             <Controls position="bottom-left" showInteractive={false} />
             <MiniMap position="top-right" />
           </ReactFlow>
@@ -1334,6 +1465,7 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
                 className="delete-button"
                 onClick={() =>
                   (() => {
+                    pushUndo();
                     const deletedNodeId = current.id;
                     setNodes((all) => all.filter((node) => node.id !== deletedNodeId));
                     setEdges((all) => all.filter((edge) => edge.source !== deletedNodeId && edge.target !== deletedNodeId));
@@ -1379,7 +1511,7 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
           </button>)}
         </div>}
       </aside>}
-      {runResult && <section className="run-results"><div className="run-results-heading"><strong>Execution results</strong><button className="icon-button" title="Close execution results" onClick={() => setRunResult(null)}><X size={16} /></button></div>{currentProposal && <div className="agent-proposal"><strong>ErrAgent proposal</strong><p>{currentProposal.summary}</p>{currentProposal.findings?.length ? <ul>{currentProposal.findings.map((finding, index) => <li key={index}>{finding.message}</li>)}</ul> : null}<div className="agent-proposal-actions"><button className="apply-proposal" type="button" disabled={applyingProposal} onClick={() => void applyRunProposal(currentProposal)}>{applyingProposal ? "Applying..." : "Approve & apply"}</button><button className="text-button" type="button" onClick={() => setRunResult(null)}>Dismiss</button></div></div>}<div><strong>Execution trace</strong>{runResult.trace.map((event, index) => <p className={`trace-event ${event.status}`} key={`${event.node_id}-${index}`}>{event.node_label}: {event.message}</p>)}</div><div><strong>Final outputs</strong><pre>{JSON.stringify(runResult.context.outputs, null, 2)}</pre>{runResult.context.errors.length > 0 && <><strong>Errors</strong><pre className="run-errors">{runResult.context.errors.join("\n")}</pre></>}</div></section>}
+      {runResult && <section className="run-results"><div className="run-results-heading"><strong>Execution results</strong><button className="icon-button" title="Close execution results" onClick={() => setRunResult(null)}><X size={16} /></button></div>{currentProposal && <div className="agent-proposal"><strong>ErrAgent proposal</strong><p>{currentProposal.summary}</p>{currentProposal.findings?.length ? <ul>{currentProposal.findings.map((finding, index) => <li key={index}>{finding.message}</li>)}</ul> : null}<div className="agent-proposal-actions"><button className="apply-proposal" type="button" disabled={applyingProposal} onClick={() => void applyRunProposal(currentProposal)}>{applyingProposal ? "Applying..." : "Approve & apply"}</button><button className="text-button" type="button" onClick={() => setRunResult(null)}>Dismiss</button></div></div>}<div><strong>Execution trace</strong>{runResult.trace.map((event, index) => <p className={`trace-event ${event.status}`} key={`${event.node_id}-${index}`}>{event.node_label}: {event.message}</p>)}</div><div className="run-log-output"><strong>Full run log</strong><pre>{runResult.context.logs.length > 0 ? runResult.context.logs.join("\n") : "No log entries were returned for this run."}</pre></div><div><strong>Final outputs</strong><pre>{JSON.stringify(runResult.context.outputs, null, 2)}</pre>{runResult.context.errors.length > 0 && <><strong>Errors</strong><pre className="run-errors">{runResult.context.errors.join("\n")}</pre></>}</div></section>}
       {showRunInputs && <RunInputsDialog inputs={inputs} onClose={() => setShowRunInputs(false)} onSubmit={(values) => { setShowRunInputs(false); void run(values); }} />}
       {helpMode && helpTopic && <HelpPanel topic={helpTopic} position={helpPosition} onClose={() => setHelpTopic(null)} />}
     </main>
