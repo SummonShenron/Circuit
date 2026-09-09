@@ -75,7 +75,7 @@ MONGO_DATABASE=workflow_builder
 GOOGLE_API_KEY=<your-google-ai-api-key>
 LOG_LEVEL=INFO
 CORS_ORIGINS=["http://127.0.0.1:8090"]
-API_ALLOWED_HOSTS=["api.example.com"]
+API_ALLOWED_HOSTS=["api.open-meteo.com","api.example.com"]
 ```
 
 `API_ALLOWED_HOSTS` is a JSON array. API nodes reject any hostname not listed here. This prevents a workflow from turning the backend into an unrestricted outbound request proxy.

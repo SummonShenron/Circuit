@@ -872,15 +872,61 @@ function NodeForm({
 }
 
 function InputsPanel({ inputs, onChange }: { inputs: WorkflowInput[]; onChange: (inputs: WorkflowInput[]) => void }) {
-  const add = () => onChange([...inputs, { key: `input_${inputs.length + 1}`, label: "New input", type: "string", required: false }]);
+  const [showAddInput, setShowAddInput] = useState(false);
+  const [draft, setDraft] = useState<WorkflowInput>({ key: `input_${inputs.length + 1}`, label: "New input", type: "string", required: false });
+  const openAddInput = () => {
+    setDraft({ key: `input_${inputs.length + 1}`, label: "New input", type: "string", required: false });
+    setShowAddInput(true);
+  };
+  const add = () => {
+    const key = draft.key.trim().replace(/\W/g, "_");
+    if (!key) return;
+    onChange([...inputs, { ...draft, key, label: draft.label.trim() || key }]);
+    setShowAddInput(false);
+  };
   const update = (index: number, change: Partial<WorkflowInput>) => onChange(inputs.map((input, inputIndex) => inputIndex === index ? { ...input, ...change } : input));
-  return <section className="workflow-inputs"><div className="panel-heading"><span>Inputs</span><button className="row-icon" type="button" title="Add input" onClick={add}><Plus size={14} /></button></div>{inputs.map((input, index) => <div className="input-row" key={`workflow-input-${index}`}><input value={input.key} aria-label="Input key" placeholder="key" onChange={(event) => update(index, { key: event.target.value.replace(/\W/g, "_") })} /><input value={input.label} aria-label="Input label" placeholder="Label" onChange={(event) => update(index, { label: event.target.value })} /><select value={input.type} aria-label="Input type" onChange={(event) => update(index, { type: event.target.value as WorkflowInput["type"] })}><option value="string">Text</option><option value="number">Number</option><option value="boolean">Yes/No</option></select><label className="required-input"><input type="checkbox" checked={input.required} onChange={(event) => update(index, { required: event.target.checked })} /> Required</label><button className="row-icon" type="button" title="Remove input" onClick={() => onChange(inputs.filter((_, inputIndex) => inputIndex !== index))}><Trash2 size={14} /></button></div>)}</section>;
+  return <>
+    <section className="workflow-inputs"><div className="panel-heading"><span>Inputs</span><button className="row-icon" type="button" title="Add input" aria-label="Add workflow input" onClick={openAddInput}><Plus size={14} /></button></div>{inputs.map((input, index) => <div className="input-row" key={`workflow-input-${index}`}><input value={input.key} aria-label="Input key" placeholder="key" onChange={(event) => update(index, { key: event.target.value.replace(/\W/g, "_") })} /><input value={input.label} aria-label="Input label" placeholder="Label" onChange={(event) => update(index, { label: event.target.value })} /><select value={input.type} aria-label="Input type" onChange={(event) => update(index, { type: event.target.value as WorkflowInput["type"] })}><option value="string">Text</option><option value="number">Number</option><option value="boolean">Yes/No</option></select><label className="required-input"><input type="checkbox" checked={input.required} onChange={(event) => update(index, { required: event.target.checked })} /> Required</label><button className="row-icon" type="button" title="Remove input" onClick={() => onChange(inputs.filter((_, inputIndex) => inputIndex !== index))}><Trash2 size={14} /></button></div>)}</section>
+    {showAddInput && <div className="input-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowAddInput(false); }}><section className="input-modal" role="dialog" aria-modal="true" aria-labelledby="add-input-title"><div className="input-modal-heading"><h2 id="add-input-title">Add workflow input</h2><button className="icon-button" type="button" title="Close" onClick={() => setShowAddInput(false)}><X size={17} /></button></div><p>Inputs become available as <code>{"{{input.key}}"}</code> in connected blocks.</p><label>Key<input autoFocus value={draft.key} onChange={(event) => setDraft({ ...draft, key: event.target.value.replace(/\W/g, "_") })} placeholder="customer_name" /></label><label>Label<input value={draft.label} onChange={(event) => setDraft({ ...draft, label: event.target.value })} placeholder="Customer name" /></label><label>Type<select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as WorkflowInput["type"] })}><option value="string">Text</option><option value="number">Number</option><option value="boolean">Yes/No</option></select></label><label className="input-modal-checkbox"><input type="checkbox" checked={draft.required} onChange={(event) => setDraft({ ...draft, required: event.target.checked })} /> Required</label><div className="input-modal-actions"><button className="text-button" type="button" onClick={() => setShowAddInput(false)}>Cancel</button><button className="apply-proposal" type="button" onClick={add} disabled={!draft.key.trim()}>Add input</button></div></section></div>}
+  </>;
 }
 
 function TutorialPanel({ tutorial, step, complete, onNext, onBack, onSkip, onOpenConsole }: { tutorial: Tutorial; step: number; complete: boolean; onNext: () => void; onBack: () => void; onSkip: () => void; onOpenConsole: () => void }) {
   const steps = tutorial.steps;
   const current = steps[step] ?? steps[steps.length - 1];
-  return <aside className="tutorial-panel" role="dialog" aria-label={tutorial.title}><div className="tutorial-panel-heading"><span><Sparkles size={16} /> {tutorial.title}</span><button className="icon-button" type="button" title="Skip tutorial" onClick={onSkip}><X size={16} /></button></div><div className="tutorial-progress">Step {step + 1} of {steps.length}</div><h2>{current.title}</h2><p>{current.body}</p><div className="tutorial-panel-actions"><button className="text-button" type="button" onClick={onBack} disabled={step === 0}>Back</button>{step === steps.length - 1 ? <button className="apply-proposal" type="button" onClick={onOpenConsole}>Open Console</button> : <button className="apply-proposal" type="button" onClick={onNext} disabled={!complete}>Next</button>}</div></aside>;
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragOffset = useRef({ x: 0, y: 0 });
+  const panelRef = useRef<HTMLElement | null>(null);
+  const clampPosition = (left: number, top: number) => {
+    const panel = panelRef.current;
+    const width = panel?.offsetWidth ?? 360;
+    const height = panel?.offsetHeight ?? 280;
+    return {
+      left: Math.max(8, Math.min(left, window.innerWidth - width - 8)),
+      top: Math.max(8, Math.min(top, window.innerHeight - height - 8)),
+    };
+  };
+  const startDragging = (event: React.PointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("button")) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    dragOffset.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    setPosition({ left: rect.left, top: rect.top });
+    setDragging(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const movePanel = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragging) return;
+    setPosition(clampPosition(event.clientX - dragOffset.current.x, event.clientY - dragOffset.current.y));
+  };
+  const stopDragging = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragging) return;
+    setDragging(false);
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  return <aside ref={panelRef} className={`tutorial-panel${dragging ? " is-dragging" : ""}`} role="dialog" aria-label={tutorial.title} style={position ? { left: position.left, top: position.top, right: "auto", bottom: "auto" } : undefined}><div className="tutorial-panel-heading" onPointerDown={startDragging} onPointerMove={movePanel} onPointerUp={stopDragging} onPointerCancel={stopDragging}><span><Sparkles size={16} /> {tutorial.title}</span><button className="icon-button" type="button" title="Skip tutorial" onClick={onSkip}><X size={16} /></button></div><div className="tutorial-progress">Step {step + 1} of {steps.length}</div><h2>{current.title}</h2><p>{current.body}</p><div className="tutorial-panel-actions"><button className="text-button" type="button" onClick={onBack} disabled={step === 0}>Back</button>{step === steps.length - 1 ? <button className="apply-proposal" type="button" onClick={onOpenConsole}>Open Console</button> : <button className="apply-proposal" type="button" onClick={onNext} disabled={!complete}>Next</button>}</div></aside>;
 }
 
 function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void }) {

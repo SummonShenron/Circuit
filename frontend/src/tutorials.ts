@@ -1,7 +1,7 @@
 import type { Edge } from "@xyflow/react";
 import type { FlowNode, WorkflowInput } from "./editorTypes";
 
-export type TutorialId = "chat-assistant" | "routing";
+export type TutorialId = "chat-assistant" | "routing" | "weather-briefing";
 
 export type TutorialContext = {
   inputs: WorkflowInput[];
@@ -38,6 +38,17 @@ const configuredTrigger = (nodes: FlowNode[]) => nodes.find((node) =>
 const prompt = (node: FlowNode | undefined) => String(node?.data.config.prompt ?? "");
 
 const usesMessage = (node: FlowNode | undefined) => prompt(node).includes("{{input.message}}");
+
+const apiNodes = (nodes: FlowNode[]) => nodes.filter((node) => node.data.kind === "api");
+
+const weatherApi = (nodes: FlowNode[]) => apiNodes(nodes).find((node) =>
+  node.data.config.method === "GET" &&
+  String(node.data.config.url ?? "").includes("api.open-meteo.com/v1/forecast") &&
+  node.data.config.output_key === "weather");
+
+const weatherBriefing = (nodes: FlowNode[]) => nodes.find((node) =>
+  node.data.kind === "llm" &&
+  prompt(node).toLowerCase().includes("weather"));
 
 const router = (nodes: FlowNode[]) => nodes.find((node) => node.data.kind === "llm" && node.data.config.json_mode === true);
 
@@ -225,9 +236,56 @@ const routing: Tutorial = {
   ],
 };
 
+const weatherTutorial: Tutorial = {
+  id: "weather-briefing",
+  title: "Weather briefing tutorial",
+  workflowName: "Weather Briefing Tutorial",
+  steps: [
+    {
+      title: "Add the weather API",
+      body: "Add an API Request block. Set Method to GET, URL to https://api.open-meteo.com/v1/forecast?latitude=41.59&longitude=-93.62&current=temperature_2m,relative_humidity_2m,weather_code&timezone=auto, and Output key to weather. Open-Meteo does not require an API key.",
+      complete: ({ nodes }) => Boolean(weatherApi(nodes)),
+    },
+    {
+      title: "Add an LLM briefing",
+      body: "Add an LLM block. Ask it to turn weather data into a friendly, concise briefing for someone in Des Moines. Tell it to include the current temperature and one practical suggestion. You will insert the API response after connecting the blocks.",
+      complete: ({ nodes }) => Boolean(weatherBriefing(nodes)),
+    },
+    {
+      title: "Connect the API to the LLM",
+      body: "Connect the API Request block to the LLM block. Variables from upstream blocks become available only after the connection is made.",
+      complete: ({ nodes, edges }) => {
+        const api = weatherApi(nodes);
+        const llm = weatherBriefing(nodes);
+        return Boolean(api && llm && linked(edges, api.id, llm.id));
+      },
+    },
+    {
+      title: "Insert the weather response",
+      body: "In the LLM prompt, add a new line named Weather data. Click Insert variable and choose the API block's weather output. The prompt should contain a variable like {{api_block_id.weather}}.",
+      complete: ({ nodes, edges }) => {
+        const api = weatherApi(nodes);
+        const llm = weatherBriefing(nodes);
+        return Boolean(api && llm && linked(edges, api.id, llm.id) && prompt(llm).includes(`{{${api.id}.weather}}`));
+      },
+    },
+    {
+      title: "Save and run",
+      body: "Save the workflow, then click Run workflow. Inspect the API output first, then read the LLM's weather briefing. This is the core Circuit pattern: API data becomes context for an LLM.",
+      complete: ({ hasSaved }) => hasSaved,
+    },
+    {
+      title: "Expand the workflow",
+      body: "Try changing the coordinates to another city. Next, add workflow inputs for latitude and longitude, add a Condition block for extreme temperatures, or connect the briefing to an email or Google Drive block.",
+      complete: () => true,
+    },
+  ],
+};
+
 export const tutorials: Record<TutorialId, Tutorial> = {
   "chat-assistant": chatAssistant,
   routing,
+  "weather-briefing": weatherTutorial,
 };
 
-export const isTutorialId = (value: string | null): value is TutorialId => value === "chat-assistant" || value === "routing";
+export const isTutorialId = (value: string | null): value is TutorialId => value === "chat-assistant" || value === "routing" || value === "weather-briefing";
