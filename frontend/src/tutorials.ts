@@ -253,7 +253,7 @@ const weatherTutorial: Tutorial = {
     },
     {
       title: "Create a JSON weather request",
-      body: "Add a second API Request block. Set Method to POST, URL to https://httpbin.org/post, and Output key to weather_request. In the JSON body, create a schema with location and weather fields. Use Insert variable to map values from the weather API, for example: {\"location\":\"Des Moines, IA\",\"weather\":{\"temperature_c\":\"{{weather_api_id.weather.body.current.temperature_2m}}\",\"humidity\":\"{{weather_api_id.weather.body.current.relative_humidity_2m}}\",\"code\":\"{{weather_api_id.weather.body.current.weather_code}}\"}}. Replace weather_api_id with the ID shown for your first API block. Httpbin echoes the JSON so you can inspect the schema safely.",
+      body: "Add a second API Request block. Set Method to POST, URL to https://httpbin.org/post, and Output key to weather_request. In JSON body, type this valid object exactly (leave the weather value as an empty string for now):\n{\"location\":\"Des Moines, IA\",\"weather\":\"\"}\nHttpbin echoes the JSON so you can inspect the schema safely. Do not type {{ or a block ID yourself; use Insert variable in the next step.",
       complete: ({ nodes }) => {
         const api = weatherSchemaApi(nodes);
         const body = JSON.stringify(api?.data.config.body ?? {});
@@ -271,12 +271,12 @@ const weatherTutorial: Tutorial = {
     },
     {
       title: "Map live weather into the schema",
-      body: "In the POST body, replace placeholder weather values with variables from the connected weather API. Map temperature_2m, relative_humidity_2m, and weather_code from the weather response. The body should contain a variable beginning with the first API block's ID.",
+      body: "In the POST body's weather field, place your cursor between the two quotes after \"weather\":. Click Insert variable and choose the first API block's weather output. The final JSON should look like {\"location\":\"Des Moines, IA\",\"weather\":\"{{api_id.weather}}\"}. Do not add extra braces or type the API block ID manually.",
       complete: ({ nodes, edges }) => {
         const api = weatherApi(nodes);
         const schema = weatherSchemaApi(nodes);
         const body = JSON.stringify(schema?.data.config.body ?? {});
-        return Boolean(api && schema && linked(edges, api.id, schema.id) && body.includes(`{{${api.id}.`));
+        return Boolean(api && schema && linked(edges, api.id, schema.id) && body.includes(`{{${api.id}.weather}}`));
       },
     },
     {
