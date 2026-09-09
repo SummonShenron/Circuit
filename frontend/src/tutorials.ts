@@ -46,6 +46,11 @@ const weatherApi = (nodes: FlowNode[]) => apiNodes(nodes).find((node) =>
   String(node.data.config.url ?? "").includes("api.open-meteo.com/v1/forecast") &&
   node.data.config.output_key === "weather");
 
+const weatherSchemaApi = (nodes: FlowNode[]) => apiNodes(nodes).find((node) =>
+  node.data.config.method === "POST" &&
+  String(node.data.config.url ?? "") === "https://httpbin.org/post" &&
+  node.data.config.output_key === "weather_request");
+
 const weatherBriefing = (nodes: FlowNode[]) => nodes.find((node) =>
   node.data.kind === "llm" &&
   prompt(node).toLowerCase().includes("weather"));
@@ -247,26 +252,45 @@ const weatherTutorial: Tutorial = {
       complete: ({ nodes }) => Boolean(weatherApi(nodes)),
     },
     {
-      title: "Add an LLM briefing",
-      body: "Add an LLM block. Ask it to turn weather data into a friendly, concise briefing for someone in Des Moines. Tell it to include the current temperature and one practical suggestion. You will insert the API response after connecting the blocks.",
-      complete: ({ nodes }) => Boolean(weatherBriefing(nodes)),
-    },
-    {
-      title: "Connect the API to the LLM",
-      body: "Connect the API Request block to the LLM block. Variables from upstream blocks become available only after the connection is made.",
-      complete: ({ nodes, edges }) => {
-        const api = weatherApi(nodes);
-        const llm = weatherBriefing(nodes);
-        return Boolean(api && llm && linked(edges, api.id, llm.id));
+      title: "Create a JSON weather request",
+      body: "Add a second API Request block. Set Method to POST, URL to https://httpbin.org/post, and Output key to weather_request. In the JSON body, create a schema with location and weather fields. Use Insert variable to map values from the weather API, for example: {\"location\":\"Des Moines, IA\",\"weather\":{\"temperature_c\":\"{{weather_api_id.weather.body.current.temperature_2m}}\",\"humidity\":\"{{weather_api_id.weather.body.current.relative_humidity_2m}}\",\"code\":\"{{weather_api_id.weather.body.current.weather_code}}\"}}. Replace weather_api_id with the ID shown for your first API block. Httpbin echoes the JSON so you can inspect the schema safely.",
+      complete: ({ nodes }) => {
+        const api = weatherSchemaApi(nodes);
+        const body = JSON.stringify(api?.data.config.body ?? {});
+        return Boolean(api && body.includes("location") && body.includes("weather"));
       },
     },
     {
-      title: "Insert the weather response",
-      body: "In the LLM prompt, add a new line named Weather data. Click Insert variable and choose the API block's weather output. The prompt should contain a variable like {{api_block_id.weather}}.",
+      title: "Connect the weather data",
+      body: "Connect the weather API block to the JSON schema API block. Variables from upstream blocks become available only after the connection is made, which is why the first API must run before the POST request.",
       complete: ({ nodes, edges }) => {
         const api = weatherApi(nodes);
+        const schema = weatherSchemaApi(nodes);
+        return Boolean(api && schema && linked(edges, api.id, schema.id));
+      },
+    },
+    {
+      title: "Map live weather into the schema",
+      body: "In the POST body, replace placeholder weather values with variables from the connected weather API. Map temperature_2m, relative_humidity_2m, and weather_code from the weather response. The body should contain a variable beginning with the first API block's ID.",
+      complete: ({ nodes, edges }) => {
+        const api = weatherApi(nodes);
+        const schema = weatherSchemaApi(nodes);
+        const body = JSON.stringify(schema?.data.config.body ?? {});
+        return Boolean(api && schema && linked(edges, api.id, schema.id) && body.includes(`{{${api.id}.`));
+      },
+    },
+    {
+      title: "Add an LLM briefing",
+      body: "Add an LLM block. Ask it to turn the structured weather data into a friendly, concise briefing for someone in Des Moines. Tell it to include the current temperature and one practical suggestion.",
+      complete: ({ nodes }) => Boolean(weatherBriefing(nodes)),
+    },
+    {
+      title: "Connect the schema to the LLM",
+      body: "Connect the JSON schema API block to the LLM block, then add a Weather data section to the prompt. Use Insert variable to add the POST response, such as {{schema_api_id.weather_request}}. This is the reusable API → JSON schema → LLM pattern.",
+      complete: ({ nodes, edges }) => {
+        const api = weatherSchemaApi(nodes);
         const llm = weatherBriefing(nodes);
-        return Boolean(api && llm && linked(edges, api.id, llm.id) && prompt(llm).includes(`{{${api.id}.weather}}`));
+        return Boolean(api && llm && linked(edges, api.id, llm.id) && prompt(llm).includes(`{{${api.id}.weather_request}}`));
       },
     },
     {
