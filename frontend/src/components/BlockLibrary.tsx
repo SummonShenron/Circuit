@@ -11,11 +11,12 @@ type BlockLibraryProps = {
   onHelp: (topic: HelpTopic, position: { x: number; y: number }) => void;
   getHelpTopic: (kind: Kind) => HelpTopic;
   children: ReactNode;
+  className?: string;
 };
 
-export function BlockLibrary({ blocks, helpMode, renderIcon, onAdd, onHelp, getHelpTopic, children }: BlockLibraryProps) {
+export function BlockLibrary({ blocks, helpMode, renderIcon, onAdd, onHelp, getHelpTopic, children, className }: BlockLibraryProps) {
   return (
-    <aside className="library-panel" onClickCapture={(event) => {
+    <aside className={`library-panel ${className || ""}`} onClickCapture={(event) => {
       if (helpMode && event.target === event.currentTarget) {
         event.preventDefault();
         event.stopPropagation();

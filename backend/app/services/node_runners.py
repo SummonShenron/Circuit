@@ -3,6 +3,7 @@ import logging
 import base64
 import csv
 import io
+import json
 import xml.etree.ElementTree as ET
 from typing import Any
 from urllib.parse import urlparse, urlunsplit
@@ -362,6 +363,7 @@ async def run_erragent(node: WorkflowNode, context: dict[str, Any], connections:
         api_key = SecretService(settings).decrypt(secret)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    logger.info(f"ErrAgent request: endpoint={endpoint}, has_api_key={bool(api_key)}, headers={list(headers.keys())}")
     available_connections: list[dict[str, Any]] = []
     available_secret_names: list[str] = []
     if connections and owner_id:
@@ -378,13 +380,35 @@ async def run_erragent(node: WorkflowNode, context: dict[str, Any], connections:
             item.name
             for item in await SecretRepository(connections._database).list(owner_id)
         ]
+    
+    # Remove additionalProperties from workflow (not supported in Gemini 3.5 Flash Developer API)
+    def clean_additional_properties(obj: Any) -> Any:
+        """Recursively remove additionalProperties from dict/list structures"""
+        if isinstance(obj, dict):
+            # Remove additionalProperties from this dict
+            obj = {k: v for k, v in obj.items() if k != "additionalProperties"}
+            # Recursively clean all values
+            return {k: clean_additional_properties(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [clean_additional_properties(item) for item in obj]
+        else:
+            return obj
+    
+    workflow_dict = context.get("workflow")
+    if workflow_dict:
+        workflow_dict = clean_additional_properties(workflow_dict)
+    
+    latest_run = context.get("latest_run")
+    if latest_run:
+        latest_run = clean_additional_properties(latest_run)
+    
     payload = {
         "operation": config.operation,
         "goal": goal,
         "incident_id": incident_id,
         "context": {
-            "workflow": context.get("workflow"),
-            "latest_run": context.get("latest_run"),
+            "workflow_json": json.dumps(workflow_dict) if workflow_dict else None,
+            "latest_run_json": json.dumps(latest_run) if latest_run else None,
             "available_node_types": context.get("available_node_types", []),
             "available_connections": available_connections,
             "available_secret_names": available_secret_names,
@@ -392,10 +416,19 @@ async def run_erragent(node: WorkflowNode, context: dict[str, Any], connections:
     }
     try:
         async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
-            response = await client.post(endpoint, headers=headers, json=payload)
+            payload_str = json.dumps(payload)
+            logger.info(f"ErrAgent payload contains additionalProperties: {'additionalProperties' in payload_str}")
+            logger.info(f"ErrAgent payload sample: {payload_str[:300]}")
+            
+            response = await client.post(endpoint, headers=headers, content=payload_str.encode())
     except httpx.ConnectError as error:
+        logger.error(f"ErrAgent TLS connection failed to {endpoint}")
         raise ValueError(f"ErrAgent bridge could not establish TLS connection to {endpoint}. Check the production API hostname and certificate.") from error
+    
+    logger.info(f"ErrAgent response: status={response.status_code}, body={response.text[:200]}")
+    
     if response.status_code >= 400:
+        logger.error(f"ErrAgent failed: {response.text}")
         raise ValueError(f"ErrAgent request failed (HTTP {response.status_code}): {response.text[:500]}")
     try:
         result = response.json()
