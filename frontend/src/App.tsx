@@ -1054,6 +1054,8 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
   const [isConnectingBlock, setIsConnectingBlock] = useState(false);
   const [showMobileLibrary, setShowMobileLibrary] = useState(false);
   const [showMobileInspector, setShowMobileInspector] = useState(false);
+  const [libraryCollapsed, setLibraryCollapsed] = useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [tutorialId, setTutorialId] = useState<TutorialId | null>(() => {
     const stored = window.sessionStorage.getItem("circuit-tutorial");
     return isTutorialId(stored) ? stored : null;
@@ -1510,8 +1512,8 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
           <button className={`icon-button ${helpMode ? "help-active" : ""}`} title="Toggle Help Mode" onClick={() => { setHelpMode((active) => !active); setHelpTopic(null); }}><CircleHelp size={18} /></button>
           <button className="icon-button" title="Open Workflow Copilot" onClick={() => setShowCopilot(true)}><MessageCircle size={18} /></button>
           <button className="icon-button" title="Open workflow Console" onClick={() => setShowConsole(true)}><MessageSquareText size={18} /></button>
-          <button className="icon-button library-toggle-mobile" title="Toggle block library" onClick={() => { setShowMobileInspector(false); setShowMobileLibrary(!showMobileLibrary); }}><Tag size={18} /></button>
-          <button className="icon-button inspector-toggle-mobile" title="Toggle block inspector" onClick={() => { setShowMobileLibrary(false); setShowMobileInspector(!showMobileInspector); }}><PanelRight size={18} /></button>
+          <button className="icon-button library-toggle-mobile" title="Toggle block library" onClick={() => { setShowMobileInspector(false); setShowMobileLibrary(!showMobileLibrary); setLibraryCollapsed(!libraryCollapsed); }}><Tag size={18} /></button>
+          <button className="icon-button inspector-toggle-mobile" title="Toggle block inspector" onClick={() => { setShowMobileLibrary(false); setShowMobileInspector(!showMobileInspector); setInspectorCollapsed(!inspectorCollapsed); }}><PanelRight size={18} /></button>
           <button
             className="run-button"
             onClick={() => inputs.length ? setShowRunInputs(true) : void run({})}
@@ -1525,9 +1527,9 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
       {showConsole && <aside className="console-panel"><div className="console-heading"><strong>Workflow Console</strong><button className="icon-button" type="button" title="Close Console" onClick={() => setShowConsole(false)}><X size={16} /></button></div><p className="console-context">Calls the event-triggered workflow as a headless client.</p><div className="console-messages">{consoleMessages.length === 0 && <p className="console-empty">Send a message to test this workflow.</p>}{consoleMessages.map((item, index) => <p className={`console-message ${item.role}`} key={index}>{item.content}</p>)}{consoleSending && <p className="console-message assistant">Waiting for Circuit...</p>}</div>{consoleError && <p className="console-error">{consoleError}</p>}<div className="console-compose"><textarea value={consoleDraft} onChange={(event) => setConsoleDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendConsoleMessage(); } }} placeholder="Type a message..." rows={3} /><button className="run-button" type="button" onClick={() => void sendConsoleMessage()} disabled={consoleSending || !consoleDraft.trim()}>Send</button></div></aside>}
       {editorError && <div className="editor-alert" role="alert"><strong>⚠️ Save Error</strong><pre>{editorError}</pre><button type="button" onClick={() => { navigator.clipboard.writeText(editorError); setNotice("Error copied to clipboard"); }} title="Copy error message" aria-label="Copy error"><Braces size={14} /></button><button type="button" onClick={() => setEditorError("")} aria-label="Dismiss save error"><X size={16} /></button></div>}
       {tutorial && <TutorialPanel tutorial={tutorial} step={tutorialStep} complete={tutorialComplete} onNext={nextTutorialStep} onBack={() => setTutorialStep((step) => Math.max(step - 1, 0))} onSkip={closeTutorial} onOpenConsole={() => { setShowConsole(true); closeTutorial(); }} />}
-      <section className={`workspace ${showCopilot ? "with-copilot" : ""}`}>
+      <section className={`workspace ${showCopilot ? "with-copilot" : ""}`} style={{ "--library-w": libraryCollapsed ? "0px" : undefined, "--inspector-w": inspectorCollapsed ? "0px" : undefined } as React.CSSProperties}>
         {(showMobileLibrary || showMobileInspector) && <div className="mobile-library-backdrop" onClick={() => { setShowMobileLibrary(false); setShowMobileInspector(false); }} />}
-        <BlockLibrary className={showMobileLibrary ? "visible" : ""} blocks={blocks} helpMode={helpMode} renderIcon={(kind) => <Icon kind={kind} />} onAdd={add} onHelp={(topic, position) => { setHelpTopic(topic); setHelpPosition(position); }} getHelpTopic={(kind) => blockHelp[kind]}>
+        <BlockLibrary className={`${showMobileLibrary ? "visible" : ""} ${libraryCollapsed ? "collapsed" : ""}`} blocks={blocks} helpMode={helpMode} renderIcon={(kind) => <Icon kind={kind} />} onAdd={add} onHelp={(topic, position) => { setHelpTopic(topic); setHelpPosition(position); }} getHelpTopic={(kind) => blockHelp[kind]}>
           <InputsPanel inputs={inputs} onChange={setInputs} />
           <div className="library-tip">
             <Sparkles size={15} /> Connect blocks to expose variables.
@@ -1573,7 +1575,7 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
           </ReactFlow>
           <div className="canvas-mascot"><PatchyEmptyState tab="open" compact isAddingBlock={isAddingBlock} isConnectingBlock={isConnectingBlock} isThinking={copilotThinking} isExecuting={running} executionNodeId={executionNodeId} hasExecutionError={hasExecutionError} isAssistantOpen={showCopilot} isExporting={isExporting} onOpenAssistant={() => setShowCopilot(true)} /></div>
         </section>
-        <aside className={`inspector-panel ${showMobileInspector ? "visible" : ""}`} onClickCapture={(event) => { if (helpMode && event.target === event.currentTarget) { event.preventDefault(); event.stopPropagation(); setHelpTopic(panelHelp.inspector); setHelpPosition({ x: event.clientX, y: event.clientY }); } }}>
+        <aside className={`inspector-panel ${showMobileInspector ? "visible" : ""} ${inspectorCollapsed ? "collapsed" : ""}`} onClickCapture={(event) => { if (helpMode && event.target === event.currentTarget) { event.preventDefault(); event.stopPropagation(); setHelpTopic(panelHelp.inspector); setHelpPosition({ x: event.clientX, y: event.clientY }); } }}>
           {current ? (
             <>
               <div className="panel-heading">
