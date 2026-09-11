@@ -1,7 +1,7 @@
 import type { Edge } from "@xyflow/react";
 import type { FlowNode, WorkflowInput } from "./editorTypes";
 
-export type TutorialId = "chat-assistant" | "routing" | "weather-briefing";
+export type TutorialId = "chat-assistant" | "routing" | "weather-briefing" | "rag-retriever";
 
 export type TutorialContext = {
   inputs: WorkflowInput[];
@@ -58,6 +58,20 @@ const weatherBriefing = (nodes: FlowNode[]) => nodes.find((node) =>
 const router = (nodes: FlowNode[]) => nodes.find((node) => node.data.kind === "llm" && node.data.config.json_mode === true);
 
 const specialists = (nodes: FlowNode[]) => nodes.filter((node) => node.data.kind === "llm" && node.data.config.json_mode !== true);
+
+const retriever = (nodes: FlowNode[]) => nodes.find((node) => node.data.kind === "mongodb_vector_search");
+
+const retrieverUsesMessage = (node: FlowNode | undefined) => String(node?.data.config.query ?? "").includes("{{input.message}}");
+
+const answerLlm = (nodes: FlowNode[]) => specialists(nodes).find((node) => {
+  const text = prompt(node).toLowerCase();
+  return text.includes("retrieved") || text.includes("context");
+});
+
+const chatLlm = (nodes: FlowNode[]) => {
+  const answer = answerLlm(nodes);
+  return specialists(nodes).find((node) => node.id !== answer?.id && usesMessage(node));
+};
 
 const linked = (edges: Edge[], source: string, target: string) => edges.some((edge) => edge.source === source && edge.target === target);
 
@@ -306,10 +320,122 @@ const weatherTutorial: Tutorial = {
   ],
 };
 
+const ragRetriever: Tutorial = {
+  id: "rag-retriever",
+  title: "RAG retriever tutorial",
+  workflowName: "RAG Retriever Tutorial",
+  steps: [
+    {
+      title: "Start from the chat basics",
+      body: "Add the three workflow inputs conversation_id, message, and history. Then add a Schedule block, set Trigger mode to External event, event name to chat-message, and trigger secret to CHAT_TRIGGER_TOKEN.\nThis is the same foundation as the chat assistant tutorial.",
+      complete: (context) => hasChatInputs(context) && Boolean(configuredTrigger(context.nodes)),
+    },
+    {
+      title: "Add the router",
+      body: "Add an LLM block named Router. Turn on JSON mode and set its output key to classification.\nPrompt: classify the user message as either a knowledge question or small talk. Reply only with {\"route\":\"retrieve\"} or {\"route\":\"chat\"}.\nuser message: \nInsert the Message variable after 'user message:'.",
+      complete: ({ nodes }) => {
+        const node = router(nodes);
+        return Boolean(node && node.data.config.output_key === "classification" && usesMessage(node));
+      },
+    },
+    {
+      title: "Add the retriever and the chat specialist",
+      body: "Add a MongoDB Search block. This is the retriever: it embeds the query and runs a MongoDB Atlas search against your index.\nDon't have your own indexed collection yet? Click 'Use Circuit's shared search index' to seed a ready-to-query knowledge base about Circuit itself, no setup required. To use your own data instead, set Database name, Collection name, and Search index name to match a collection you have already indexed (reuse the local-rag db_utils/search.py setup as a template).\nSet K nearest neighbors and Max chunks to 4, and set Query to the Message variable.\nAlso add a Chat LLM block for small talk. Prompt: reply warmly in one or two sentences.\nuser message: \nInsert the Message variable into both.",
+      complete: ({ nodes }) => {
+        const node = retriever(nodes);
+        return Boolean(node && retrieverUsesMessage(node) && chatLlm(nodes));
+      },
+    },
+    {
+      title: "Add the retrieval answer",
+      body: "Add another LLM block named Answer, with JSON mode off. Prompt: using only the retrieved context below, answer the user's question. If the context does not contain the answer, say you are not sure.\nretrieved context: \nuser message: \nInsert the Message variable after 'user message:'. You will insert the retrieved context after connecting the retriever in the next step.",
+      complete: ({ nodes }) => Boolean(answerLlm(nodes)),
+    },
+    {
+      title: "Configure the condition",
+      body: "Add a Condition block, then connect Schedule to Router and Router to the Condition block.\nIn the condition's input path, use Insert variable to add the Router classification, then type .route just before the closing braces so it reads {{router_id.classification.route}}.\nSet the operator to Equals and the comparison value to retrieve.",
+      complete: ({ nodes, edges }) => {
+        const node = router(nodes);
+        const condition = nodes.find((item) => item.data.kind === "condition");
+        const trigger = eventTrigger(nodes);
+        const path = conditionPath(condition);
+        const clause = (condition?.data.config.conditions as Array<{ operator?: string; value?: unknown }> | undefined)?.[0];
+        const operator = String(clause?.operator ?? condition?.data.config.operator ?? "");
+        const value = String(clause?.value ?? condition?.data.config.value ?? "");
+        return Boolean(trigger && node && condition && linked(edges, trigger.id, node.id) && linked(edges, node.id, condition.id) && path.includes(`${node.id}.classification`) && path.includes("route") && operator === "equals" && value === "retrieve");
+      },
+    },
+    {
+      title: "Wire both branches",
+      body: "Drag the Condition block's TRUE handle to the MongoDB Search block, and its FALSE handle to the Chat block.\nBoth branches are required. The retrieval branch only runs the search when the router actually classified the message as a question.",
+      complete: ({ nodes, edges }) => {
+        const condition = nodes.find((item) => item.data.kind === "condition");
+        const node = retriever(nodes);
+        const chat = chatLlm(nodes);
+        if (!condition || !node || !chat) return false;
+        const onTrue = branchTarget(edges, condition.id, "true");
+        const onFalse = branchTarget(edges, condition.id, "false");
+        return Boolean(onTrue === node.id && onFalse === chat.id);
+      },
+    },
+    {
+      title: "Connect the retriever to the answer",
+      body: "Connect the MongoDB Search block to the Answer block. Then click after 'retrieved context:' in the Answer prompt and use Insert variable to add the MongoDB Search block's output.\nInsert variable only lists outputs from connected upstream blocks, so this must happen after the connection.",
+      complete: ({ nodes, edges }) => {
+        const node = retriever(nodes);
+        const answer = answerLlm(nodes);
+        return Boolean(node && answer && linked(edges, node.id, answer.id) && prompt(answer).includes(`{{${node.id}.`));
+      },
+    },
+    {
+      title: "Merge the branches",
+      body: "Add a Transform block and connect both Answer and Chat into it. Scroll to the array merge section, click Add array merge, and set its output key to reply. Then use Insert variable to add both LLM responses, one per line.\nOnly one branch actually runs, so reply always holds just the response that happened.",
+      complete: ({ nodes, edges }) => {
+        const transform = nodes.find((item) => item.data.kind === "transform");
+        const answer = answerLlm(nodes);
+        const chat = chatLlm(nodes);
+        if (!transform || !answer || !chat) return false;
+        const merged = JSON.stringify(transform.data.config.merge_arrays ?? {}) + JSON.stringify(transform.data.config.mappings ?? {});
+        return [answer, chat].every((node) => merged.includes(`{{${node.id}.`) && linked(edges, node.id, transform.id));
+      },
+    },
+    {
+      title: "Return the merged reply",
+      body: "Add an HTTP Response block and connect the Transform into it. Set its JSON body to {\"message\":\"\"} and use Insert variable inside the quotes to add the Transform reply.",
+      complete: ({ nodes, edges }) => {
+        const transform = nodes.find((item) => item.data.kind === "transform");
+        const response = nodes.find((item) => item.data.kind === "http_response");
+        return Boolean(transform && response && linked(edges, transform.id, response.id) && JSON.stringify(response.data.config.body ?? {}).includes(`{{${transform.id}.`));
+      },
+    },
+    {
+      title: "Publish the response",
+      body: "Select the Schedule block and set 'Public response node' to the HTTP Response block.",
+      complete: ({ nodes }) => {
+        const trigger = eventTrigger(nodes);
+        const response = nodes.find((item) => item.data.kind === "http_response");
+        return Boolean(trigger && response && trigger.data.config.response_node_id === response.id);
+      },
+    },
+    {
+      title: "Save your work",
+      body: "Click the save icon in the toolbar so the Console runs the version you just built.",
+      complete: ({ hasSaved }) => hasSaved,
+    },
+    {
+      title: "Try both routes",
+      body: "Open Workflow Console and ask a real question about your indexed documents, then send something like 'hey, how's it going'.\nCompare the execution trace: the router classifies, the condition picks a branch, and only a real question runs the MongoDB Search retriever before the Answer block responds.",
+      complete: () => true,
+    },
+  ],
+};
+
 export const tutorials: Record<TutorialId, Tutorial> = {
   "chat-assistant": chatAssistant,
   routing,
   "weather-briefing": weatherTutorial,
+  "rag-retriever": ragRetriever,
 };
 
-export const isTutorialId = (value: string | null): value is TutorialId => value === "chat-assistant" || value === "routing" || value === "weather-briefing";
+export const isTutorialId = (value: string | null): value is TutorialId => value === "chat-assistant" || value === "routing" || value === "weather-briefing" || value === "rag-retriever";
+

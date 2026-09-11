@@ -4,6 +4,8 @@ import base64
 import csv
 import io
 import json
+import math
+import asyncio
 import xml.etree.ElementTree as ET
 from typing import Any
 from urllib.parse import urlparse, urlunsplit
@@ -11,6 +13,7 @@ from urllib.parse import urlparse, urlunsplit
 import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from ..models.workflow import (
     ConditionNodeConfig,
@@ -32,6 +35,7 @@ from ..models.workflow import (
     WebhookPostNodeConfig,
     HttpResponseNodeConfig,
     MongoDbNodeConfig,
+    MongoVectorSearchNodeConfig,
     GmailSendNodeConfig,
     RedditHeadlinesNodeConfig,
     GoogleCalendarNodeConfig,
@@ -144,15 +148,35 @@ async def run_condition(node: WorkflowNode, context: dict[str, Any]) -> str:
 
     def evaluate(clause: dict[str, Any]) -> bool:
         candidate = read_path(context, clause["input_path"])
-        match clause["operator"]:
-            case "equals":
-                return candidate == clause.get("value")
-            case "not_equals":
-                return candidate != clause.get("value")
-            case "contains":
-                return clause.get("value") in candidate if candidate is not None else False
-            case _:
-                return candidate is not None
+        operator = clause["operator"]
+        expected = clause.get("value")
+        if operator == "equals":
+            matched = candidate == expected
+        elif operator == "not_equals":
+            matched = candidate != expected
+        elif operator == "contains":
+            if candidate is None:
+                matched = False
+            elif isinstance(candidate, (dict, list)):
+                serialized = json.dumps(candidate, ensure_ascii=False)
+                compact_serialized = json.dumps(candidate, separators=(",", ":"), ensure_ascii=False)
+                expected_text = str(expected)
+                normalized_expected = re.sub(r"\s+", "", expected_text)
+                matched = expected_text in serialized or expected_text in compact_serialized or normalized_expected in compact_serialized
+            else:
+                matched = str(expected) in str(candidate)
+        else:
+            matched = candidate is not None
+        logger.info(
+            "condition evaluated node_id=%s path=%s operator=%s expected=%r candidate_type=%s matched=%s",
+            node.id,
+            clause["input_path"],
+            operator,
+            expected,
+            type(candidate).__name__,
+            matched,
+        )
+        return matched
 
     results = [evaluate(clause if isinstance(clause, dict) else clause.model_dump()) for clause in clauses]
     passed = all(results) if config.logic == "and" else any(results)
@@ -242,6 +266,7 @@ async def run_github_repository(node: WorkflowNode, context: dict[str, Any], con
     owner, repository = resolve_template(config.owner, context), resolve_template(config.repository, context)
     if not isinstance(owner, str) or not isinstance(repository, str) or not owner or not repository:
         raise ValueError("GitHub owner and repository must resolve to text values")
+    logger.info("GitHub repository resolved node_id=%s owner=%s repository=%s operation=%s", node.id, owner, repository, config.operation)
     token = await GitHubConnectionService(get_settings()).access_token(connections, config.connection_id, owner_id)
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
     if config.operation != "repository_context":
@@ -314,6 +339,10 @@ async def run_github_action(node: WorkflowNode, context: dict[str, Any], connect
     if not connections or not owner_id:
         raise ValueError("GitHub action requires connection storage")
     values = resolve_template({"owner": config.owner, "repository": config.repository, "issue_number": config.issue_number, "title": config.title, "body": config.body, "head": config.head, "base": config.base}, context)
+    if not isinstance(values.get("owner"), str) or not values["owner"].strip():
+        raise ValueError("GitHub action owner resolved to an empty value. Connect an upstream value or enter an owner.")
+    if not isinstance(values.get("repository"), str) or not values["repository"].strip():
+        raise ValueError("GitHub action repository resolved to an empty value. Connect an upstream value or enter a repository.")
     token = await GitHubConnectionService(get_settings()).access_token(connections, config.connection_id, owner_id)
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "Content-Type": "application/json"}
     base = f"https://api.github.com/repos/{values['owner']}/{values['repository']}"
@@ -729,6 +758,118 @@ async def run_mongodb(node: WorkflowNode, context: dict[str, Any], connections: 
     return {config.output_key: result}
 
 
+def _chunk_text(document: dict[str, Any]) -> str:
+    for key in ("text", "page_content", "content", "chunk", "body"):
+        value = document.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return " ".join(value for value in document.values() if isinstance(value, str))
+
+
+def _score_lexical_chunks(candidates: list[dict[str, Any]], query: str, limit: int) -> list[dict[str, Any]]:
+    keywords = [word for word in re.findall(r"\w+", query.lower()) if len(word) > 2]
+    if not keywords or not candidates:
+        return candidates[:limit]
+    texts = [_chunk_text(document).lower() for document in candidates]
+    doc_count = len(candidates)
+    doc_frequency = {keyword: sum(1 for text in texts if keyword in text) for keyword in keywords}
+    scored: list[tuple[dict[str, Any], float]] = []
+    for document, text in zip(candidates, texts):
+        score = 0.0
+        for keyword in keywords:
+            occurrences = text.count(keyword)
+            if occurrences:
+                term_frequency = 1 + math.log(occurrences)
+                inverse_doc_frequency = math.log(1 + (doc_count / (1 + doc_frequency.get(keyword, 0))))
+                score += term_frequency * inverse_doc_frequency
+        scored.append((document, score))
+    scored.sort(key=lambda item: item[1], reverse=True)
+    ranked = [document for document, score in scored if score > 0][:limit]
+    return ranked or candidates[:limit]
+
+
+def _fuse_rankings(vector_ranked: list[dict[str, Any]], lexical_ranked: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    scores: dict[int, float] = {}
+    lookup: dict[int, dict[str, Any]] = {}
+    for ranked in (vector_ranked, lexical_ranked):
+        for rank, document in enumerate(ranked):
+            key = id(document)
+            lookup[key] = document
+            scores[key] = scores.get(key, 0.0) + 1.0 / (60.0 + rank + 1)
+    ordered = sorted(scores, key=lambda key: scores[key], reverse=True)
+    return [lookup[key] for key in ordered][:limit]
+
+
+async def run_mongodb_vector_search(node: WorkflowNode, context: dict[str, Any], connections: ConnectionRepository | None, owner_id: str | None) -> dict[str, Any]:
+    config = node.typed_config()
+    assert isinstance(config, MongoVectorSearchNodeConfig)
+    settings = get_settings()
+    uri = settings.mongo_workflow_uri
+    if config.connection_uri_secret:
+        if not connections or not owner_id:
+            raise ValueError("MongoDB Search secret references require connection storage")
+        secret = await SecretRepository(connections._database).get(owner_id, config.connection_uri_secret)
+        if not secret:
+            raise ValueError(f"MongoDB Search secret '{config.connection_uri_secret}' was not found for this user")
+        uri = SecretService(settings).decrypt(secret)
+    if not uri:
+        raise ValueError("MongoDB Search requires MONGO_WORKFLOW_URI or a connection URI secret")
+    if not settings.google_api_key:
+        raise ValueError("MongoDB Search requires GOOGLE_API_KEY to generate query embeddings")
+    query = resolve_template(config.query, context)
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("MongoDB Search query must resolve to non-empty text")
+    filter_value = resolve_template(config.filter, context) or {}
+    if not isinstance(filter_value, dict):
+        raise ValueError("MongoDB Search filter must resolve to a JSON object")
+    embeddings = GoogleGenerativeAIEmbeddings(model=config.embedding_model, google_api_key=settings.google_api_key, output_dimensionality=config.embedding_dimensions)
+    query_vector = await asyncio.to_thread(embeddings.embed_query, query)
+    fetch_limit = max(config.k, config.max_chunks)
+    stage: dict[str, Any] = {
+        "index": config.index_name,
+        "path": config.embedding_path,
+        "queryVector": query_vector,
+        "numCandidates": max(100, fetch_limit * 10),
+        "limit": fetch_limit,
+    }
+    if filter_value:
+        stage["filter"] = filter_value
+    pipeline = [{"$vectorSearch": stage}, {"$addFields": {"score": {"$meta": "vectorSearchScore"}}}]
+    client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=10_000)
+    try:
+        collection = client[config.database_name][config.collection_name]
+        try:
+            raw_results = await collection.aggregate(pipeline).to_list(length=fetch_limit)
+        except Exception as error:
+            raise ValueError(f"MongoDB vector search failed: {error}") from error
+    finally:
+        client.close()
+    documents: list[dict[str, Any]] = []
+    for record in raw_results:
+        document = dict(record)
+        document.pop(config.embedding_path, None)
+        if "_id" in document:
+            document["_id"] = str(document["_id"])
+        documents.append(document)
+    if config.strategy == "lexical":
+        selected = _score_lexical_chunks(documents, query, config.max_chunks)
+    elif config.strategy == "hybrid":
+        vector_ranked = documents[: config.k]
+        lexical_ranked = _score_lexical_chunks(documents, query, config.k)
+        selected = _fuse_rankings(vector_ranked, lexical_ranked, config.max_chunks)
+    else:
+        selected = documents[: config.max_chunks]
+    logger.info(
+        "MongoDB vector search completed node_id=%s strategy=%s index=%s candidates=%s selected=%s",
+        node.id,
+        config.strategy,
+        config.index_name,
+        len(documents),
+        len(selected),
+    )
+    return {config.output_key: {"strategy": config.strategy, "query": query, "count": len(selected), "chunks": selected}}
+
+
 async def run_gmail_send(node: WorkflowNode, context: dict[str, Any], connections: ConnectionRepository | None, owner_id: str | None) -> dict[str, Any]:
     config = node.typed_config()
     assert isinstance(config, GmailSendNodeConfig)
@@ -887,6 +1028,8 @@ async def run_node(node: WorkflowNode, context: dict[str, Any], connections: Con
         return await run_http_response(node, context)
     if node.type == NodeType.MONGODB:
         return await run_mongodb(node, context, connections, owner_id)
+    if node.type == NodeType.MONGODB_VECTOR_SEARCH:
+        return await run_mongodb_vector_search(node, context, connections, owner_id)
     if node.type == NodeType.GMAIL_SEND:
         return await run_gmail_send(node, context, connections, owner_id)
     if node.type == NodeType.REDDIT_HEADLINES:

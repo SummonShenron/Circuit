@@ -70,6 +70,7 @@ def make_node_runner(workflow: Workflow, node: WorkflowNode, body_nodes_by_loop:
             node_label=node.label,
             status="started",
             message=f"Running {node.label}",
+            received={"inputs": state["inputs"], "outputs": state["outputs"]},
         )
         context = {
             "inputs": state["inputs"],
@@ -110,11 +111,13 @@ def make_node_runner(workflow: Workflow, node: WorkflowNode, body_nodes_by_loop:
                 results.append(result)
                 if result.get("error") and not config.continue_on_error:
                     return {"decisions": {node.id: "limit_reached"}, "outputs": {node.id: {config.result_key: results}}, "errors": [result["error"]], "trace": [started]}
-            return {"decisions": {node.id: "complete"}, "outputs": {node.id: {config.result_key: results}}, "logs": [f"{node.label}: processed {len(items)} item(s)"], "trace": [started, TraceEvent(node_id=node.id, node_label=node.label, status="completed", message=f"Processed {len(items)} item(s)")]}
+            output = {config.result_key: results}
+            return {"decisions": {node.id: "complete"}, "outputs": {node.id: output}, "logs": [f"{node.label}: processed {len(items)} item(s)"], "trace": [started, TraceEvent(node_id=node.id, node_label=node.label, status="completed", message=f"Processed {len(items)} item(s)", output=output)]}
         if node.type == NodeType.REPEAT_UNTIL:
             iteration = state["iterations"].get(node.id, 0) + 1
             decision = await run_repeat_until(node, context, iteration)
-            return {"iterations": {node.id: iteration}, "decisions": {node.id: decision}, "logs": [f"{node.label}: {decision} ({iteration})"], "trace": [started, TraceEvent(node_id=node.id, node_label=node.label, status="completed", message=f"{decision}: iteration {iteration}")]}
+            output = {"decision": decision, "iteration": iteration}
+            return {"iterations": {node.id: iteration}, "decisions": {node.id: decision}, "logs": [f"{node.label}: {decision} ({iteration})"], "trace": [started, TraceEvent(node_id=node.id, node_label=node.label, status="completed", message=f"{decision}: iteration {iteration}", output=output)]}
         retry = getattr(node.typed_config(), "retry", None)
         attempts = retry.max_attempts if retry else 1
         for attempt in range(1, attempts + 1):
@@ -133,7 +136,7 @@ def make_node_runner(workflow: Workflow, node: WorkflowNode, body_nodes_by_loop:
                 return {
                     "errors": [message],
                     "logs": [f"{node.label}: failed after {attempts} attempt(s)"],
-                    "trace": [started, TraceEvent(node_id=node.id, node_label=node.label, status="failed", message=message)],
+                    "trace": [started, TraceEvent(node_id=node.id, node_label=node.label, status="failed", message=message, output={"error": message})],
                 }
 
         if node.type == NodeType.CONDITION:
@@ -142,13 +145,13 @@ def make_node_runner(workflow: Workflow, node: WorkflowNode, body_nodes_by_loop:
             return {
                 "decisions": {node.id: decision},
                 "logs": [f"{node.label}: {decision}"],
-                "trace": [started, TraceEvent(node_id=node.id, node_label=node.label, status="completed", message=f"Branch: {decision}")],
+                "trace": [started, TraceEvent(node_id=node.id, node_label=node.label, status="completed", message=f"Branch: {decision}", output={"branch": decision})],
             }
         logger.info("workflow node completed node_id=%s", node.id)
         return {
             "outputs": {node.id: result},
             "logs": [f"{node.label}: completed"],
-            "trace": [started, TraceEvent(node_id=node.id, node_label=node.label, status="completed", message="Completed")],
+            "trace": [started, TraceEvent(node_id=node.id, node_label=node.label, status="completed", message="Completed", output=result)],
         }
 
     return execute

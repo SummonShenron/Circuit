@@ -36,6 +36,7 @@ class NodeType(StrEnum):
     ERRAGENT = "erragent"
     HTTP_RESPONSE = "http_response"
     MONGODB = "mongodb"
+    MONGODB_VECTOR_SEARCH = "mongodb_vector_search"
 
 
 class Position(BaseModel):
@@ -225,6 +226,22 @@ class MongoDbNodeConfig(BaseModel):
     output_key: str = "mongodb_result"
 
 
+class MongoVectorSearchNodeConfig(BaseModel):
+    database_name: str = Field(min_length=1)
+    collection_name: str = Field(min_length=1)
+    index_name: str = "vector_index"
+    embedding_path: str = "embedding"
+    query: str = ""
+    k: int = Field(default=4, ge=1, le=50)
+    max_chunks: int = Field(default=4, ge=1, le=50)
+    strategy: Literal["vector", "lexical", "hybrid"] = "vector"
+    filter: dict[str, Any] = Field(default_factory=dict)
+    embedding_model: str = "models/gemini-embedding-001"
+    embedding_dimensions: int = Field(default=768, ge=1, le=4096)
+    connection_uri_secret: str | None = None
+    output_key: str = "retrieved_context"
+
+
 class GmailSendNodeConfig(BaseModel):
     to: str = ""
     subject: str = ""
@@ -309,7 +326,7 @@ class ScheduleNodeConfig(BaseModel):
         return None if value == "" else value
 
 
-NodeConfig = LlmNodeConfig | ApiNodeConfig | ConditionNodeConfig | TransformNodeConfig | VariableNodeConfig | RepeatUntilNodeConfig | ForEachNodeConfig | GitHubRepositoryNodeConfig | ResendEmailNodeConfig | GoogleDriveNodeConfig | ScheduleNodeConfig | GoogleDriveUpdateNodeConfig | WeatherForecastNodeConfig | NewsHeadlinesNodeConfig | GoogleSheetsAppendNodeConfig | CsvCreateNodeConfig | RssFeedNodeConfig | WebhookPostNodeConfig | HttpResponseNodeConfig | MongoDbNodeConfig | GmailSendNodeConfig | RedditHeadlinesNodeConfig | GoogleCalendarNodeConfig | GitHubActionNodeConfig | JobSearchNodeConfig | ErrAgentNodeConfig
+NodeConfig = LlmNodeConfig | ApiNodeConfig | ConditionNodeConfig | TransformNodeConfig | VariableNodeConfig | RepeatUntilNodeConfig | ForEachNodeConfig | GitHubRepositoryNodeConfig | ResendEmailNodeConfig | GoogleDriveNodeConfig | ScheduleNodeConfig | GoogleDriveUpdateNodeConfig | WeatherForecastNodeConfig | NewsHeadlinesNodeConfig | GoogleSheetsAppendNodeConfig | CsvCreateNodeConfig | RssFeedNodeConfig | WebhookPostNodeConfig | HttpResponseNodeConfig | MongoDbNodeConfig | MongoVectorSearchNodeConfig | GmailSendNodeConfig | RedditHeadlinesNodeConfig | GoogleCalendarNodeConfig | GitHubActionNodeConfig | JobSearchNodeConfig | ErrAgentNodeConfig
 
 
 class WorkflowNode(BaseModel):
@@ -341,6 +358,7 @@ class WorkflowNode(BaseModel):
             NodeType.WEBHOOK_POST: WebhookPostNodeConfig,
             NodeType.HTTP_RESPONSE: HttpResponseNodeConfig,
             NodeType.MONGODB: MongoDbNodeConfig,
+            NodeType.MONGODB_VECTOR_SEARCH: MongoVectorSearchNodeConfig,
             NodeType.GMAIL_SEND: GmailSendNodeConfig,
             NodeType.REDDIT_HEADLINES: RedditHeadlinesNodeConfig,
             NodeType.GOOGLE_CALENDAR: GoogleCalendarNodeConfig,
@@ -627,6 +645,8 @@ class TraceEvent(BaseModel):
     status: Literal["started", "completed", "failed"]
     message: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    received: dict[str, Any] | None = None
+    output: Any = None
 
 
 class RunWorkflowResponse(BaseModel):

@@ -20,6 +20,7 @@ from ..models.workflow import (
     ErrAgentNodeConfig,
     ScheduleNodeConfig,
     MongoDbNodeConfig,
+    MongoVectorSearchNodeConfig,
     TEMPLATE_PATTERN,
 )
 from ..config import get_settings
@@ -216,6 +217,20 @@ async def validate_workflow_preflight(
                 issues.append(PrefightIssue("error", node.id, node.label, "MongoDB requires MONGO_WORKFLOW_URI or a connection URI secret"))
             if config.operation == "update_one" and not config.update:
                 issues.append(PrefightIssue("error", node.id, node.label, "MongoDB update_one requires an update document"))
+            if config.connection_uri_secret and secrets:
+                secret = await secrets.get(workflow.owner_id, config.connection_uri_secret)
+                if not secret:
+                    issues.append(PrefightIssue("error", node.id, node.label, f"Secret '{config.connection_uri_secret}' is not configured in your dashboard"))
+
+        if node.type == NodeType.MONGODB_VECTOR_SEARCH:
+            config = node.typed_config()
+            assert isinstance(config, MongoVectorSearchNodeConfig)
+            if not config.connection_uri_secret and not settings.mongo_workflow_uri:
+                issues.append(PrefightIssue("error", node.id, node.label, "MongoDB Search requires MONGO_WORKFLOW_URI or a connection URI secret"))
+            if not settings.google_api_key:
+                issues.append(PrefightIssue("error", node.id, node.label, "MongoDB Search requires GOOGLE_API_KEY to generate query embeddings"))
+            if not config.query.strip():
+                issues.append(PrefightIssue("error", node.id, node.label, "MongoDB Search requires a query"))
             if config.connection_uri_secret and secrets:
                 secret = await secrets.get(workflow.owner_id, config.connection_uri_secret)
                 if not secret:
