@@ -33,12 +33,14 @@ RepositoryDependency = Annotated[ConnectionRepository, Depends(repository)]
 @router.post("/google/start", response_model=GoogleAuthorizationStart)
 async def start_google_connection(request: Request, connections: RepositoryDependency, user_id: UserDependency) -> GoogleAuthorizationStart:
     try:
-        url, state, code_verifier = GoogleCalendarOAuth(get_settings()).authorization_url()
+        settings = get_settings()
+        url, state, code_verifier = GoogleCalendarOAuth(settings).authorization_url()
         return_to = request.query_params.get("return_to")
         if return_to:
             parsed = urlparse(return_to)
-            if parsed.scheme not in {"http", "https"} or parsed.hostname not in {"127.0.0.1", "localhost"}:
-                raise ValueError("OAuth return target must be a local application URL")
+            allowed_hosts = {"127.0.0.1", "localhost"} | {urlparse(origin).hostname for origin in settings.cors_origins}
+            if parsed.scheme not in {"http", "https"} or parsed.hostname not in allowed_hosts:
+                raise ValueError("OAuth return target must be a trusted application URL")
         await connections.create_pending(state, user_id, code_verifier, return_to)
         return GoogleAuthorizationStart(authorization_url=url)
     except ValueError as error:

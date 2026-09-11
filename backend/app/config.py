@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     erragent_api_key: str | None = None
     mongo_workflow_uri: str | None = None
     api_allowed_hosts: list[str] = []
-    cors_origins: list[str] = ["http://127.0.0.1:8090", "https://circuitworkflow.com"]
+    cors_origins: list[str] = ["http://127.0.0.1:8090", "https://circuitworkflow.com", "https://www.circuitworkflow.com"]
     backend_url: str | None = None  # Cloud backend URL
 
     model_config = SettingsConfigDict(
