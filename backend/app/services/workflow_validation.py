@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any
 from urllib.parse import urlparse
@@ -21,6 +22,7 @@ from ..models.workflow import (
     ScheduleNodeConfig,
     MongoDbNodeConfig,
     MongoVectorSearchNodeConfig,
+    FileUploadNodeConfig,
     TEMPLATE_PATTERN,
 )
 from ..config import get_settings
@@ -235,6 +237,23 @@ async def validate_workflow_preflight(
                 secret = await secrets.get(workflow.owner_id, config.connection_uri_secret)
                 if not secret:
                     issues.append(PrefightIssue("error", node.id, node.label, f"Secret '{config.connection_uri_secret}' is not configured in your dashboard"))
+
+        if node.type == NodeType.FILE_UPLOAD:
+            config = node.typed_config()
+            assert isinstance(config, FileUploadNodeConfig)
+            if config.input_key:
+                declared = next((item for item in workflow.inputs if item.key == config.input_key), None)
+                if not declared:
+                    issues.append(PrefightIssue("error", node.id, node.label, f"File Upload references workflow input '{config.input_key}', which no longer exists"))
+                elif declared.type != "file":
+                    issues.append(PrefightIssue("error", node.id, node.label, f"Workflow input '{config.input_key}' must be a File input"))
+            if not config.content.strip() and not config.input_key:
+                issues.append(PrefightIssue("error", node.id, node.label, "File Upload requires an uploaded file or a workflow input to source from"))
+            elif config.content.strip() and config.parse_json:
+                try:
+                    json.loads(config.content)
+                except json.JSONDecodeError as error:
+                    issues.append(PrefightIssue("error", node.id, node.label, f"Uploaded file is not valid JSON: {error}"))
 
         # Check secret references
         secret_references = extract_secret_references(node)

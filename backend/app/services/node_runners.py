@@ -36,6 +36,7 @@ from ..models.workflow import (
     HttpResponseNodeConfig,
     MongoDbNodeConfig,
     MongoVectorSearchNodeConfig,
+    FileUploadNodeConfig,
     GmailSendNodeConfig,
     RedditHeadlinesNodeConfig,
     GoogleCalendarNodeConfig,
@@ -870,6 +871,25 @@ async def run_mongodb_vector_search(node: WorkflowNode, context: dict[str, Any],
     return {config.output_key: {"strategy": config.strategy, "query": query, "count": len(selected), "chunks": selected}}
 
 
+async def run_file_upload(node: WorkflowNode, context: dict[str, Any]) -> dict[str, Any]:
+    config = node.typed_config()
+    assert isinstance(config, FileUploadNodeConfig)
+    content = config.content
+    if config.input_key:
+        run_value = context["inputs"].get(config.input_key)
+        if isinstance(run_value, str) and run_value.strip():
+            content = run_value
+    if not content.strip():
+        raise ValueError(f"File Upload node '{node.label}' has no uploaded file. Open the node and upload a file, or provide '{config.input_key or 'a run input'}' when running the workflow.")
+    if not config.parse_json:
+        return {config.output_key: {"filename": config.filename, "text": content}}
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"File Upload node '{node.label}' could not parse '{config.filename or 'the uploaded file'}' as JSON: {error}") from error
+    return {config.output_key: {"filename": config.filename, "data": data}}
+
+
 async def run_gmail_send(node: WorkflowNode, context: dict[str, Any], connections: ConnectionRepository | None, owner_id: str | None) -> dict[str, Any]:
     config = node.typed_config()
     assert isinstance(config, GmailSendNodeConfig)
@@ -1030,6 +1050,8 @@ async def run_node(node: WorkflowNode, context: dict[str, Any], connections: Con
         return await run_mongodb(node, context, connections, owner_id)
     if node.type == NodeType.MONGODB_VECTOR_SEARCH:
         return await run_mongodb_vector_search(node, context, connections, owner_id)
+    if node.type == NodeType.FILE_UPLOAD:
+        return await run_file_upload(node, context)
     if node.type == NodeType.GMAIL_SEND:
         return await run_gmail_send(node, context, connections, owner_id)
     if node.type == NodeType.REDDIT_HEADLINES:

@@ -37,6 +37,7 @@ class NodeType(StrEnum):
     HTTP_RESPONSE = "http_response"
     MONGODB = "mongodb"
     MONGODB_VECTOR_SEARCH = "mongodb_vector_search"
+    FILE_UPLOAD = "file_upload"
 
 
 class Position(BaseModel):
@@ -47,7 +48,7 @@ class Position(BaseModel):
 class WorkflowInput(BaseModel):
     key: str = Field(pattern=r"^[a-zA-Z_]\w*$")
     label: str = Field(min_length=1, max_length=80)
-    type: Literal["string", "number", "boolean"] = "string"
+    type: Literal["string", "number", "boolean", "file"] = "string"
     required: bool = False
 
 
@@ -242,6 +243,14 @@ class MongoVectorSearchNodeConfig(BaseModel):
     output_key: str = "retrieved_context"
 
 
+class FileUploadNodeConfig(BaseModel):
+    filename: str = ""
+    content: str = Field(default="", max_length=500_000)
+    parse_json: bool = True
+    input_key: str = ""
+    output_key: str = "uploaded_file"
+
+
 class GmailSendNodeConfig(BaseModel):
     to: str = ""
     subject: str = ""
@@ -326,7 +335,7 @@ class ScheduleNodeConfig(BaseModel):
         return None if value == "" else value
 
 
-NodeConfig = LlmNodeConfig | ApiNodeConfig | ConditionNodeConfig | TransformNodeConfig | VariableNodeConfig | RepeatUntilNodeConfig | ForEachNodeConfig | GitHubRepositoryNodeConfig | ResendEmailNodeConfig | GoogleDriveNodeConfig | ScheduleNodeConfig | GoogleDriveUpdateNodeConfig | WeatherForecastNodeConfig | NewsHeadlinesNodeConfig | GoogleSheetsAppendNodeConfig | CsvCreateNodeConfig | RssFeedNodeConfig | WebhookPostNodeConfig | HttpResponseNodeConfig | MongoDbNodeConfig | MongoVectorSearchNodeConfig | GmailSendNodeConfig | RedditHeadlinesNodeConfig | GoogleCalendarNodeConfig | GitHubActionNodeConfig | JobSearchNodeConfig | ErrAgentNodeConfig
+NodeConfig = LlmNodeConfig | ApiNodeConfig | ConditionNodeConfig | TransformNodeConfig | VariableNodeConfig | RepeatUntilNodeConfig | ForEachNodeConfig | GitHubRepositoryNodeConfig | ResendEmailNodeConfig | GoogleDriveNodeConfig | ScheduleNodeConfig | GoogleDriveUpdateNodeConfig | WeatherForecastNodeConfig | NewsHeadlinesNodeConfig | GoogleSheetsAppendNodeConfig | CsvCreateNodeConfig | RssFeedNodeConfig | WebhookPostNodeConfig | HttpResponseNodeConfig | MongoDbNodeConfig | MongoVectorSearchNodeConfig | GmailSendNodeConfig | RedditHeadlinesNodeConfig | GoogleCalendarNodeConfig | GitHubActionNodeConfig | JobSearchNodeConfig | ErrAgentNodeConfig | FileUploadNodeConfig
 
 
 class WorkflowNode(BaseModel):
@@ -359,6 +368,7 @@ class WorkflowNode(BaseModel):
             NodeType.HTTP_RESPONSE: HttpResponseNodeConfig,
             NodeType.MONGODB: MongoDbNodeConfig,
             NodeType.MONGODB_VECTOR_SEARCH: MongoVectorSearchNodeConfig,
+            NodeType.FILE_UPLOAD: FileUploadNodeConfig,
             NodeType.GMAIL_SEND: GmailSendNodeConfig,
             NodeType.REDDIT_HEADLINES: RedditHeadlinesNodeConfig,
             NodeType.GOOGLE_CALENDAR: GoogleCalendarNodeConfig,
@@ -556,7 +566,7 @@ def validate_run_inputs(declarations: list[WorkflowInput], values: dict[str, Any
         if declaration.key not in values or values[declaration.key] is None:
             continue
         value = values[declaration.key]
-        expected_type = {"string": str, "number": (int, float), "boolean": bool}[declaration.type]
+        expected_type = {"string": str, "number": (int, float), "boolean": bool, "file": str}[declaration.type]
         if declaration.type == "number" and isinstance(value, bool):
             raise ValueError(f"Workflow input '{declaration.key}' must be a number")
         if not isinstance(value, expected_type):

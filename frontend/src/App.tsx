@@ -52,6 +52,7 @@ import {
   Workflow,
   X,
   Search,
+  Upload,
 } from "lucide-react";
 import "./App.css";
 import "./EditorOverrides.css";
@@ -131,6 +132,7 @@ const blockHelp: Record<Kind, HelpTopic> = {
   http_response: { title: "HTTP Response block", what: "Defines the public HTTP response returned by an event-triggered workflow.", when: "Use it as the final node in a workflow called by a CLI, frontend, or another service. Select it as the Schedule node's Public response node.", example: "Status: 200\nHeaders: {\"Content-Type\":\"application/json\"}\nBody: {\"message\":\"{{answer.response}}\",\"conversation_id\":\"{{input.conversation_id}}\"}\nOutput key: http_response" },
   mongodb: { title: "MongoDB block", what: "Reads records or updates one record in a server-side MongoDB database.", when: "Use it for user-approved data lookups or bounded updates. Credentials stay on the server or in an encrypted user secret.", example: "Operation: Find\nDatabase: app\nCollection: users\nFilter: {\"email\":\"{{input.email}}\"}" },
   mongodb_vector_search: { title: "MongoDB Search block", what: "Embeds a query and runs a MongoDB Atlas $vectorSearch against a configured search index, returning the top matching chunks.", when: "Use it as the retriever step in a RAG workflow, right before an LLM block that answers using the returned chunks.", example: "Index: vector_index, k: 4, Strategy: Hybrid, Query: {{input.message}}" },
+  file_upload: { title: "File Upload block", what: "Stores an uploaded file's contents in the workflow so later blocks can read it. JSON files are parsed automatically.", when: "Use it to feed a report, export, or data file into an LLM or Transform block without an external service.", example: "Upload weekly-report.json, then pass {{upload.uploaded_file.data}} to an LLM block." },
   gmail_send: { title: "Send Gmail block", what: "Sends plain-text email through a connected Google Workspace account.", when: "Use it when email should come from the user’s Google account instead of Resend.", example: "To: someone@example.com, Subject: Workflow result" },
   reddit_headlines: { title: "Reddit Headlines block", what: "Reads subreddit posts through Reddit’s public JSON endpoint using a descriptive User-Agent.", when: "Use it for community monitoring, topic summaries, or social listening workflows.", example: "Subreddit: news, Sort: top, Limit: 5" },
   google_calendar: { title: "Google Calendar block", what: "Lists, creates, or updates calendar events through a connected Google Workspace account.", when: "Use it for briefings, reminders, scheduling, and event-driven workflows.", example: "Operation: Create, Event: {\"summary\":\"Team sync\",\"start\":{...},\"end\":{...}}" },
@@ -238,6 +240,7 @@ function Icon({ kind }: { kind: Kind }) {
         http_response: SendHorizontal,
         mongodb: Database,
         mongodb_vector_search: Search,
+        file_upload: Upload,
         gmail_send: Mail,
         reddit_headlines: MessageSquareText,
         google_calendar: CalendarDays,
@@ -424,6 +427,8 @@ function outputKeys(node: FlowNode) {
     return [String(node.data.config.output_key ?? "mongodb_result")];
   if (node.data.kind === "mongodb_vector_search")
     return [String(node.data.config.output_key ?? "retrieved_context")];
+  if (node.data.kind === "file_upload")
+    return [String(node.data.config.output_key ?? "uploaded_file")];
   if (node.data.kind === "gmail_send")
     return [String(node.data.config.output_key ?? "gmail_response")];
   if (node.data.kind === "reddit_headlines")
@@ -591,6 +596,57 @@ function MongoVectorSearchForm({ config, variables, onChange }: { config: Record
   </div>;
 }
 
+function FileUploadForm({ config, workflowInputs, onChange }: { config: Record<string, unknown>; workflowInputs: WorkflowInput[]; onChange: (config: Record<string, unknown>) => void }) {
+  const update = (key: string, value: unknown) => onChange({ ...config, [key]: value });
+  const [error, setError] = useState("");
+  const content = String(config.content ?? "");
+  const filename = String(config.filename ?? "");
+  const parseJson = config.parse_json !== false;
+  const inputKey = String(config.input_key ?? "");
+  const fileInputs = workflowInputs.filter((input) => input.type === "file");
+  const source = inputKey ? "input" : "upload";
+  const handleFile = (file: File | undefined) => {
+    setError("");
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result ?? "");
+      if (text.length > 500_000) {
+        setError(`File is too large (${Math.round(text.length / 1024)} KB). Keep uploads under 500 KB.`);
+        return;
+      }
+      if (parseJson) {
+        try {
+          JSON.parse(text);
+        } catch (parseError) {
+          setError(parseError instanceof Error ? `File is not valid JSON: ${parseError.message}` : "File is not valid JSON");
+        }
+      }
+      onChange({ ...config, filename: file.name, content: text });
+    };
+    reader.onerror = () => setError("Could not read the selected file");
+    reader.readAsText(file);
+  };
+  return <div className="node-form">
+    <label>Source<select value={source} onChange={(event) => update("input_key", event.target.value === "input" ? (fileInputs[0]?.key ?? "") : "")}><option value="upload">Upload a file into this block</option><option value="input" disabled={!fileInputs.length}>From a workflow input (set at run time)</option></select></label>
+    {source === "input"
+      ? <>
+          <p className="form-hint">The file is provided each time the workflow runs, instead of being stored in the block.</p>
+          {fileInputs.length
+            ? <label>Workflow input<select value={inputKey} onChange={(event) => update("input_key", event.target.value)}>{fileInputs.map((input) => <option key={input.key} value={input.key}>{input.label} ({input.key})</option>)}</select></label>
+            : <span className="field-error">Add a File-type workflow input on the left panel first.</span>}
+        </>
+      : <>
+          <p className="form-hint">Upload a file once here; its contents are saved with the workflow so later blocks can read it. Re-upload any time to refresh the data, such as a new weekly export.</p>
+          <label>File<input type="file" accept=".json,application/json,.txt,text/plain" onChange={(event) => handleFile(event.target.files?.[0])} /></label>
+          {filename && <p className="form-hint">Current file: <strong>{filename}</strong> ({Math.max(1, Math.round(content.length / 1024))} KB)</p>}
+          {error && <span className="field-error">{error}</span>}
+        </>}
+    <label className="required-input"><input type="checkbox" checked={parseJson} onChange={(event) => update("parse_json", event.target.checked)} /> Parse as JSON</label>
+    <label>Output key<input value={String(config.output_key ?? "uploaded_file")} onChange={(event) => update("output_key", event.target.value)} /></label>
+  </div>;
+}
+
 function NodeForm({
   kind,
   config,
@@ -598,6 +654,7 @@ function NodeForm({
   workflowId,
   nodeId,
   bodyOptions,
+  workflowInputs,
   helpMode,
   onFieldHelp,
   onChange,
@@ -608,6 +665,7 @@ function NodeForm({
   workflowId: string | null;
   nodeId: string;
   bodyOptions: FlowNode[];
+  workflowInputs: WorkflowInput[];
   helpMode: boolean;
   onFieldHelp: (topic: HelpTopic, position: { x: number; y: number }) => void;
   onChange: (config: Record<string, unknown>) => void;
@@ -847,6 +905,7 @@ function NodeForm({
   if (kind === "github_repository") return <GitHubRepositoryForm config={config} variables={variables} returnTo={returnTo} onChange={onChange} />;
   if (kind === "github_action") return <GitHubActionForm config={config} variables={variables} onChange={onChange} />;
   if (kind === "mongodb_vector_search") return <MongoVectorSearchForm config={config} variables={variables} onChange={onChange} />;
+  if (kind === "file_upload") return <FileUploadForm config={config} workflowInputs={workflowInputs} onChange={onChange} />;
   if (kind === "github_repository") return <div className="node-form"><p className="form-hint">Read repository context or search pull requests, commits, and issues through the connected GitHub account.</p><label>Owner<input value={String(config.owner ?? "")} onChange={(event) => update("owner", event.target.value)} placeholder="octocat" /></label><label>Repository<input value={String(config.repository ?? "")} onChange={(event) => update("repository", event.target.value)} placeholder="hello-world" /></label><ConnectionPicker value={String(config.connection_id ?? "")} returnTo={returnTo} onChange={(connectionId) => update("connection_id", connectionId || undefined)} /><label>Operation<select value={String(config.operation ?? "repository_context")} onChange={(event) => update("operation", event.target.value)}><option value="repository_context">Repository context</option><option value="search_pull_requests">Search pull requests</option><option value="search_commits">Search commits</option><option value="search_issues">Search issues</option></select></label>{config.operation !== "repository_context" ? <><label>Search query<input value={String(config.search_query ?? "")} onChange={(event) => update("search_query", event.target.value)} placeholder="bug fix, author:octocat, is:open" /><span className="form-hint">Additional repository and type filters are added automatically.</span><TemplateWarnings value={String(config.search_query ?? "")} variables={variables} /></label><label>Result limit<input type="number" min="1" max="50" value={Number(config.search_limit ?? 10)} onChange={(event) => update("search_limit", Number(event.target.value))} /></label></> : <><label className="required-input"><input type="checkbox" checked={Boolean(config.include_readme ?? true)} onChange={(event) => update("include_readme", event.target.checked)} /> Include README.md</label><label className="required-input"><input type="checkbox" checked={Boolean(config.auto_select_files ?? true)} onChange={(event) => update("auto_select_files", event.target.checked)} /> Auto-select important source files</label><label>Extra file paths<textarea rows={3} value={((config.include_paths as string[] | undefined) ?? []).join("\n")} onChange={(event) => update("include_paths", event.target.value.split("\n").map((path) => path.trim()).filter(Boolean))} placeholder={"package.json\npyproject.toml"} /></label><label>Maximum files<input type="number" min="1" max="25" value={Number(config.max_files ?? 12)} onChange={(event) => update("max_files", Number(event.target.value))} /></label><label>Maximum context characters<input type="number" min="1000" max="100000" step="1000" value={Number(config.max_chars ?? 40000)} onChange={(event) => update("max_chars", Number(event.target.value))} /></label></>}<label>Output key<input value={String(config.output_key ?? "repository_context")} onChange={(event) => update("output_key", event.target.value)} /></label></div>;
   if (kind === "resend_email") return <div className="node-form"><p className="form-hint">Sends through Resend. Set RESEND_API_KEY in the backend environment before running.</p><label>From<input value={String(config.from_email ?? "")} onChange={(event) => update("from_email", event.target.value)} placeholder="Workflow Builder &lt;updates@example.com&gt;" /></label><label>To<input value={String(config.to ?? "")} onChange={(event) => update("to", event.target.value)} placeholder="person@example.com, team@example.com" /><TemplateWarnings value={String(config.to ?? "")} variables={variables} /><VariablePicker variables={variables} onInsert={(token) => update("to", `${String(config.to ?? "")}${token}`)} /></label><label>Subject<input value={String(config.subject ?? "")} onChange={(event) => update("subject", event.target.value)} /></label><label>Body<textarea rows={7} value={String(config.body ?? "")} onChange={(event) => update("body", event.target.value)} /><TemplateWarnings value={String(config.body ?? "")} variables={variables} /><VariablePicker variables={variables} onInsert={(token) => update("body", `${String(config.body ?? "")}${token}`)} /></label><label>Body format<select value={String(config.body_type ?? "text")} onChange={(event) => update("body_type", event.target.value)}><option value="text">Plain text</option><option value="html">HTML</option></select></label><label>Output key<input value={String(config.output_key ?? "email_response")} onChange={(event) => update("output_key", event.target.value)} /></label><Field {...field("resend_email.retry")}><RetryFields value={config.retry as Record<string, unknown> | undefined} onChange={(retry) => update("retry", retry)} /></Field></div>;
   if (kind === "google_drive") return <div className="node-form"><p className="form-hint">Creates a new file or updates an existing file with text content using Google Drive.</p><Field {...field("google_drive.connection")}><ConnectionPicker value={String(config.connection_id ?? "")} returnTo={returnTo} onChange={(connectionId) => update("connection_id", connectionId || undefined)} /></Field><label>File name<input value={String(config.name ?? "")} onChange={(event) => update("name", event.target.value)} placeholder="weekly-report.md" /></label><label>Content<textarea rows={8} value={String(config.content ?? "")} onChange={(event) => update("content", event.target.value)} /><TemplateWarnings value={String(config.content ?? "")} variables={variables} /><VariablePicker variables={variables} onInsert={(token) => update("content", `${String(config.content ?? "")}${token}`)} /></label><label>MIME type<input value={String(config.mime_type ?? "text/plain")} onChange={(event) => update("mime_type", event.target.value)} placeholder="text/markdown" /></label><label>Folder ID (optional)<input value={String(config.folder_id ?? "")} onChange={(event) => update("folder_id", event.target.value || undefined)} /></label><label>Existing file ID (optional)<input value={String(config.file_id ?? "")} onChange={(event) => update("file_id", event.target.value || undefined)} /></label><label>Output key<input value={String(config.output_key ?? "drive_file")} onChange={(event) => update("output_key", event.target.value)} /></label><Field {...field("google_drive.retry")}><RetryFields value={config.retry as Record<string, unknown> | undefined} onChange={(retry) => update("retry", retry)} /></Field></div>;
@@ -964,8 +1023,8 @@ function InputsPanel({ inputs, onChange }: { inputs: WorkflowInput[]; onChange: 
   };
   const update = (index: number, change: Partial<WorkflowInput>) => onChange(inputs.map((input, inputIndex) => inputIndex === index ? { ...input, ...change } : input));
   return <>
-    <section className="workflow-inputs"><div className="panel-heading"><span>Inputs</span><button className="row-icon" type="button" title="Add input" aria-label="Add workflow input" onClick={openAddInput}><Plus size={14} /></button></div>{inputs.map((input, index) => <div className="input-row" key={`workflow-input-${index}`}><input value={input.key} aria-label="Input key" placeholder="key" onChange={(event) => update(index, { key: event.target.value.replace(/\W/g, "_") })} /><input value={input.label} aria-label="Input label" placeholder="Label" onChange={(event) => update(index, { label: event.target.value })} /><select value={input.type} aria-label="Input type" onChange={(event) => update(index, { type: event.target.value as WorkflowInput["type"] })}><option value="string">Text</option><option value="number">Number</option><option value="boolean">Yes/No</option></select><label className="required-input"><input type="checkbox" checked={input.required} onChange={(event) => update(index, { required: event.target.checked })} /> Required</label><button className="row-icon" type="button" title="Remove input" onClick={() => onChange(inputs.filter((_, inputIndex) => inputIndex !== index))}><Trash2 size={14} /></button></div>)}</section>
-    {showAddInput && <div className="input-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowAddInput(false); }}><section className="input-modal" role="dialog" aria-modal="true" aria-labelledby="add-input-title"><div className="input-modal-heading"><h2 id="add-input-title">Add workflow input</h2><button className="icon-button" type="button" title="Close" onClick={() => setShowAddInput(false)}><X size={17} /></button></div><p>Inputs become available as <code>{"{{input.key}}"}</code> in connected blocks.</p><label>Key<input autoFocus value={draft.key} onChange={(event) => setDraft({ ...draft, key: event.target.value.replace(/\W/g, "_") })} placeholder="customer_name" /></label><label>Label<input value={draft.label} onChange={(event) => setDraft({ ...draft, label: event.target.value })} placeholder="Customer name" /></label><label>Type<select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as WorkflowInput["type"] })}><option value="string">Text</option><option value="number">Number</option><option value="boolean">Yes/No</option></select></label><label className="input-modal-checkbox"><input type="checkbox" checked={draft.required} onChange={(event) => setDraft({ ...draft, required: event.target.checked })} /> Required</label><div className="input-modal-actions"><button className="text-button" type="button" onClick={() => setShowAddInput(false)}>Cancel</button><button className="apply-proposal" type="button" onClick={add} disabled={!draft.key.trim()}>Add input</button></div></section></div>}
+    <section className="workflow-inputs"><div className="panel-heading"><span>Inputs</span><button className="row-icon" type="button" title="Add input" aria-label="Add workflow input" onClick={openAddInput}><Plus size={14} /></button></div>{inputs.map((input, index) => <div className="input-row" key={`workflow-input-${index}`}><input value={input.key} aria-label="Input key" placeholder="key" onChange={(event) => update(index, { key: event.target.value.replace(/\W/g, "_") })} /><input value={input.label} aria-label="Input label" placeholder="Label" onChange={(event) => update(index, { label: event.target.value })} /><select value={input.type} aria-label="Input type" onChange={(event) => update(index, { type: event.target.value as WorkflowInput["type"] })}><option value="string">Text</option><option value="number">Number</option><option value="boolean">Yes/No</option><option value="file">File</option></select><label className="required-input"><input type="checkbox" checked={input.required} onChange={(event) => update(index, { required: event.target.checked })} /> Required</label><button className="row-icon" type="button" title="Remove input" onClick={() => onChange(inputs.filter((_, inputIndex) => inputIndex !== index))}><Trash2 size={14} /></button></div>)}</section>
+    {showAddInput && <div className="input-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowAddInput(false); }}><section className="input-modal" role="dialog" aria-modal="true" aria-labelledby="add-input-title"><div className="input-modal-heading"><h2 id="add-input-title">Add workflow input</h2><button className="icon-button" type="button" title="Close" onClick={() => setShowAddInput(false)}><X size={17} /></button></div><p>Inputs become available as <code>{"{{input.key}}"}</code> in connected blocks.</p><label>Key<input autoFocus value={draft.key} onChange={(event) => setDraft({ ...draft, key: event.target.value.replace(/\W/g, "_") })} placeholder="customer_name" /></label><label>Label<input value={draft.label} onChange={(event) => setDraft({ ...draft, label: event.target.value })} placeholder="Customer name" /></label><label>Type<select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as WorkflowInput["type"] })}><option value="string">Text</option><option value="number">Number</option><option value="boolean">Yes/No</option><option value="file">File</option></select></label><label className="input-modal-checkbox"><input type="checkbox" checked={draft.required} onChange={(event) => setDraft({ ...draft, required: event.target.checked })} /> Required</label><div className="input-modal-actions"><button className="text-button" type="button" onClick={() => setShowAddInput(false)}>Cancel</button><button className="apply-proposal" type="button" onClick={add} disabled={!draft.key.trim()}>Add input</button></div></section></div>}
   </>;
 }
 
@@ -1608,6 +1667,7 @@ function Editor({ workflowId, onBack }: { workflowId: string; onBack: () => void
                 workflowId={id}
                 nodeId={current.id}
                 bodyOptions={nodes.filter((node) => node.id !== current.id)}
+                workflowInputs={inputs}
                 helpMode={helpMode}
                 onFieldHelp={(topic, position) => { setHelpTopic(topic); setHelpPosition(position); }}
                 onChange={(config) => update({ config })}
