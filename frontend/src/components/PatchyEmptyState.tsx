@@ -71,6 +71,10 @@ interface PatchyEmptyStateProps {
   isAssistantOpen?: boolean;
   isExporting?: boolean;
   compact?: boolean;
+  /** Overrides the default idle hint messages that cycle in the speech bubble. */
+  hints?: string[];
+  /** Overrides how long Patchy waits before showing the next idle hint. */
+  hintIntervalMs?: number;
   /** Called when Patchy (or his idle hint bubble) is clicked. */
   onOpenAssistant?: () => void;
 }
@@ -101,6 +105,8 @@ export const PatchyEmptyState: React.FC<PatchyEmptyStateProps> = ({
   isAssistantOpen = false,
   isExporting = false,
   compact = false,
+  hints,
+  hintIntervalMs,
   onOpenAssistant,
 }) => {
   const [celebrationDone, setCelebrationDone] = useState(true);
@@ -108,6 +114,8 @@ export const PatchyEmptyState: React.FC<PatchyEmptyStateProps> = ({
   const [showHint, setShowHint] = useState(false);
   const [hintCycle, setHintCycle] = useState(0);
   const prevStatusRef = useRef<string | null>(null);
+  const activeHints = hints && hints.length > 0 ? hints : IDLE_HINTS;
+  const idleDelayMs = hintIntervalMs ?? HINT_IDLE_DELAY_MS;
 
   const hasActiveIncidents = activeIncidentsCount > 0;
   const isSystemDegradedOrUnhealthy = systemHealth === 'degraded' || systemHealth === 'unhealthy';
@@ -171,15 +179,15 @@ export const PatchyEmptyState: React.FC<PatchyEmptyStateProps> = ({
       setShowHint(true);
       hideTimer = setTimeout(() => {
         setShowHint(false);
-        setHintCycle((prev) => (prev + 1) % IDLE_HINTS.length);
+        setHintCycle((prev) => (prev + 1) % activeHints.length);
       }, HINT_VISIBLE_MS);
-    }, HINT_IDLE_DELAY_MS);
+    }, idleDelayMs);
 
     return () => {
       clearTimeout(idleTimer);
       if (hideTimer) clearTimeout(hideTimer);
     };
-  }, [currentStatus, hintCycle]);
+  }, [currentStatus, hintCycle, activeHints.length, idleDelayMs]);
 
   const handlePoke = () => {
     setShowHint(false);
@@ -331,7 +339,7 @@ export const PatchyEmptyState: React.FC<PatchyEmptyStateProps> = ({
     : currentStatus === 'adding_block'
     ? "translate(26, 20) rotate(-130)"
     : currentStatus === 'connecting_block'
-    ? "translate(45, 64) rotate(70)"
+    ? "translate(45, 64) rotate(-110)"
     : currentStatus === 'resolved'
     ? "translate(20, 22) rotate(-140)"
     : "translate(20, 77) rotate(20)";
@@ -348,6 +356,8 @@ export const PatchyEmptyState: React.FC<PatchyEmptyStateProps> = ({
     ? "M 66 60 C 80 50, 78 32, 70 26"
     : currentStatus === 'thinking'
     ? "M 66 60 C 75 56, 69 48, 58 46"
+    : currentStatus === 'error'
+    ? "M 66 60 C 68 52, 62 46, 54 44"
     : "M 66 60 C 76 62, 82 70, 80 77";
 
   const rightHandTransform = isLaughing
@@ -355,13 +365,15 @@ export const PatchyEmptyState: React.FC<PatchyEmptyStateProps> = ({
     : currentStatus === 'adding_block'
     ? "translate(74, 20) rotate(130)"
     : currentStatus === 'connecting_block'
-    ? "translate(55, 64) rotate(-70)"
+    ? "translate(55, 64) rotate(110)"
     : currentStatus === 'resolved'
     ? "translate(80, 22) rotate(140)"
     : currentStatus === 'analyzing'
     ? "translate(70, 26) rotate(-110)"
     : currentStatus === 'thinking'
     ? "translate(57, 48) rotate(-28)"
+    : currentStatus === 'error'
+    ? "translate(52, 44) rotate(-50)"
     : "translate(80, 77) rotate(-20)";
 
   const leftArmRibs = useMemo(() => getArmRibs(leftArmPath), [leftArmPath]);
@@ -470,12 +482,10 @@ export const PatchyEmptyState: React.FC<PatchyEmptyStateProps> = ({
           50% { transform: translateY(-4px) scale(1.035); }
         }
 
-        @keyframes ibmErrorShake {
-          0%, 100% { transform: translateX(0) rotate(0); }
-          20% { transform: translateX(-3px) rotate(-3deg); }
-          40% { transform: translateX(3px) rotate(3deg); }
-          60% { transform: translateX(-2px) rotate(-2deg); }
-          80% { transform: translateX(2px) rotate(2deg); }
+        @keyframes ibmAnxiousFootTap {
+          0%, 80%, 100% { transform: translateY(0); }
+          88% { transform: translateY(-4px); }
+          94% { transform: translateY(0); }
         }
 
         @keyframes ibmAssistantGlow {
@@ -514,8 +524,8 @@ export const PatchyEmptyState: React.FC<PatchyEmptyStateProps> = ({
         }
 
         @keyframes ibmHintPop {
-          0% { opacity: 0; transform: translate(-50%, 8px) scale(0.9); }
-          100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+          0% { opacity: 0; transform: translateY(8px) scale(0.9); }
+          100% { opacity: 1; transform: translateY(0) scale(1); }
         }
 
         .ibm-bot-interactive-wrap {
@@ -538,8 +548,6 @@ export const PatchyEmptyState: React.FC<PatchyEmptyStateProps> = ({
               ? 'ibmFloat 4s cubic-bezier(0.45, 0, 0.55, 1) infinite'
               : currentStatus === 'execution'
               ? 'ibmExecutionPulse 0.8s ease-in-out infinite'
-              : currentStatus === 'error'
-              ? 'ibmErrorShake 0.42s ease-in-out infinite'
               : currentStatus === 'assistant'
               ? 'ibmAssistantGlow 1.8s ease-in-out infinite'
               : currentStatus === 'connecting_block'
@@ -557,8 +565,8 @@ export const PatchyEmptyState: React.FC<PatchyEmptyStateProps> = ({
         .ibm-bot-eyes.error-eyes { animation: ibmBlink 1.4s infinite; filter: drop-shadow(0 0 5px #F59E0B); }
         .ibm-bot-eyes.excited { animation: ibmExcitedEyes 0.12s linear infinite; }
         .ibm-bot-left-foot, .ibm-bot-right-foot { transform-box: fill-box; }
-        .ibm-bot-left-foot { transform-origin: 50% 100%; animation: ${currentStatus === 'adding_block' ? 'ibmFootKickLeft 0.24s ease-in-out infinite' : 'none'}; }
-        .ibm-bot-right-foot { transform-origin: 50% 100%; animation: ${currentStatus === 'adding_block' ? 'ibmFootKickRight 0.24s ease-in-out 0.12s infinite' : 'none'}; }
+        .ibm-bot-left-foot { transform-origin: 50% 100%; animation: ${currentStatus === 'adding_block' ? 'ibmFootKickLeft 0.24s ease-in-out infinite' : currentStatus === 'error' ? 'ibmAnxiousFootTap 2.6s ease-in-out infinite' : 'none'}; }
+        .ibm-bot-right-foot { transform-origin: 50% 100%; animation: ${currentStatus === 'adding_block' ? 'ibmFootKickRight 0.24s ease-in-out 0.12s infinite' : currentStatus === 'error' ? 'ibmAnxiousFootTap 2.6s ease-in-out 0.15s infinite' : 'none'}; }
         .ibm-bot-glint { animation: ibmGlint 4s ease-in-out infinite; }
         .ibm-falling-node { animation: ibmFallingBlock 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
         .ibm-energy-zap { animation: ibmEnergyZap 0.3s ease-in-out infinite; }
@@ -600,7 +608,9 @@ export const PatchyEmptyState: React.FC<PatchyEmptyStateProps> = ({
             style={{
               position: 'absolute',
               bottom: compact ? '108%' : '102%',
-              left: '50%',
+              right: 0,
+              maxWidth: '230px',
+              width: 'max-content',
               backgroundColor: '#0F1E17',
               border: `1px solid ${accentColor}`,
               borderRadius: '8px',
@@ -608,20 +618,20 @@ export const PatchyEmptyState: React.FC<PatchyEmptyStateProps> = ({
               color: '#E6F1ED',
               fontSize: '0.78rem',
               fontWeight: 500,
-              whiteSpace: 'nowrap',
+              lineHeight: 1.4,
+              whiteSpace: 'normal',
               boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)',
               cursor: 'pointer',
               zIndex: 20,
               animation: 'ibmHintPop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
             }}
           >
-            {IDLE_HINTS[hintCycle]}
+            {activeHints[hintCycle % activeHints.length]}
             <div
               style={{
                 position: 'absolute',
                 top: '100%',
-                left: '50%',
-                transform: 'translateX(-50%)',
+                right: '18px',
                 width: 0,
                 height: 0,
                 borderLeft: '5px solid transparent',
@@ -652,10 +662,12 @@ export const PatchyEmptyState: React.FC<PatchyEmptyStateProps> = ({
 
             {/* OVERLAY ANIMATION 1: Floating Block Payload (When Adding Block) */}
             {currentStatus === 'adding_block' && (
-              <g className="ibm-falling-node" transform="translate(38, 2)">
-                <rect x="0" y="0" width="24" height="16" rx="4" fill="#0EA5E9" stroke="#E6F1ED" strokeWidth="1.5" />
-                <rect x="4" y="4" width="8" height="3" rx="1" fill="#FFFFFF" opacity="0.8" />
-                <circle cx="18" cy="11" r="2" fill="#FFFFFF" />
+              <g transform="translate(38, 12)">
+                <g className="ibm-falling-node">
+                  <rect x="0" y="0" width="24" height="16" rx="4" fill="#0EA5E9" stroke="#E6F1ED" strokeWidth="1.5" />
+                  <rect x="4" y="4" width="8" height="3" rx="1" fill="#FFFFFF" opacity="0.8" />
+                  <circle cx="18" cy="11" r="2" fill="#FFFFFF" />
+                </g>
               </g>
             )}
 

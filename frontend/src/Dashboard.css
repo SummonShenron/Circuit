@@ -110,7 +110,10 @@
     min-height:100vh; 
     background:#f4f6f1; 
     color:#17332d; 
+    position:relative;
 }
+.dashboard-mascot { position:fixed; z-index:40; right:22px; bottom:18px; width:104px; height:104px; }
+@media (max-width:560px) { .dashboard-mascot { right:12px; bottom:12px; width:80px; height:80px; } }
 .dashboard-topbar { 
     height:64px; 
     display:flex; 
