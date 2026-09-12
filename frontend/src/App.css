@@ -264,3 +264,77 @@
 
 .tutorial-panel { position:fixed; z-index:120; right:18px; bottom:56px; width:min(620px,calc(100vw - 36px)); display:grid; gap:9px; padding:16px; color:#294d40; background:#fffdf5; border:1px solid #e7c87f; border-radius:6px; box-shadow:0 16px 38px rgba(67,54,27,.2); }.tutorial-panel.is-dragging { user-select:none; box-shadow:0 20px 44px rgba(67,54,27,.28); }.tutorial-panel-heading { display:flex; align-items:center; justify-content:space-between; color:#8b5d20; font:11px 'DM Mono',monospace; text-transform:uppercase; cursor:grab; touch-action:none; }.tutorial-panel.is-dragging .tutorial-panel-heading { cursor:grabbing; }.tutorial-panel-heading span { display:flex; align-items:center; gap:6px; }.tutorial-panel-heading .icon-button { color:#8b5d20; }.tutorial-progress { color:#8b5d20; font:10px 'DM Mono',monospace; }.tutorial-panel h2 { margin:0; color:#3f3928; font:700 21px/1.15 Fraunces,serif; }.tutorial-panel p { margin:0; color:#5d6d5f; font-size:12px; line-height:1.55; white-space:pre-line; overflow-wrap:anywhere; }.tutorial-panel-actions { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:4px; }.tutorial-panel-actions .apply-proposal { justify-self:end; }.tutorial-panel-actions .text-button:disabled { opacity:.4; }
 @media (max-width:560px) { .tutorial-panel { right:10px; bottom:48px; width:calc(100vw - 20px); } }
+
+/* Phones in landscape have plenty of width but very little height, so the width-based
+   @media (max-width:560px) rules above never match them and they fall through to the
+   desktop layout instead, whose fixed-width side panels leave almost no room for the
+   canvas. This targets that case on height + orientation and reuses the same
+   off-canvas panel technique, but keeps the single-row topbar since width isn't the
+   constraint here. */
+@media (orientation: landscape) and (max-height: 560px) {
+	.workflow-name { display: none; }
+	.workspace,
+	.workspace.with-copilot { grid-template-columns: minmax(0, 1fr) !important; min-width: 0; min-height: 0; height: 100%; margin-top: 0; }
+	.canvas-panel { display: block !important; width: 100%; height: 100%; min-height: 0; position: relative; z-index: 1; }
+	.canvas-panel > .react-flow { position: relative; z-index: 1; }
+	.library-panel,
+	.inspector-panel { z-index: 100; }
+	.library-panel {
+		position: fixed !important;
+		left: -64px;
+		top: 62px;
+		width: 64px !important;
+		max-width: 64px;
+		min-width: 0 !important;
+		height: calc(100dvh - 62px - 38px);
+		padding: 4px 2px;
+		overflow-x: hidden;
+		overflow-y: auto;
+		resize: none;
+		-webkit-overflow-scrolling: touch;
+		touch-action: pan-y;
+		overscroll-behavior: contain;
+		transition: left .3s ease;
+		border-right: 0;
+	}
+	.library-panel.visible { left: 0; }
+	.library-toggle-mobile,
+	.inspector-toggle-mobile { display: grid !important; }
+	.inspector-panel {
+		display: block !important;
+		position: fixed;
+		top: 62px;
+		right: -280px;
+		width: min(280px, 70vw);
+		min-width: 0 !important;
+		height: calc(100dvh - 62px - 38px);
+		box-sizing: border-box;
+		padding: 12px;
+		overflow-x: hidden;
+		overflow-y: auto;
+		resize: none;
+		background: #f7f8f2;
+		border-left: 1px solid #d7e0d8;
+		transition: right .3s ease;
+		-webkit-overflow-scrolling: touch;
+		touch-action: pan-y;
+	}
+	.inspector-panel.visible { right: 0; }
+	.mobile-library-backdrop { position: fixed; z-index: 98; inset: 62px 0 38px 0; background: rgba(0,0,0,.3); display: grid; pointer-events: none; }
+	.library-panel .block-category,
+	.library-panel .panel-heading,
+	.library-panel .panel-intro,
+	.library-panel .library-tip { display: none; }
+	.library-panel .workflow-inputs { display: block; width: 60px; margin: 8px auto 0; padding: 6px 0 0; border-top: 1px solid #d7e0d8; }
+	.library-panel .workflow-inputs .panel-heading { display: flex; justify-content: center; }
+	.library-panel .workflow-inputs .panel-heading span { display: none; }
+	.library-panel .workflow-inputs .row-icon { width: 52px; height: 32px; color: #37715a; background: #f0f6f1; border: 1px dashed #9bb9a5; }
+	.library-panel .workflow-inputs .input-row { display: none; }
+	.node-library { width: 60px; min-width: 0; grid-template-columns: 1fr; gap: 2px; overflow: visible; touch-action: pan-y; }
+	.library-item { grid-template-columns: 1fr; width: 52px; min-width: 0; padding: 4px; height: 52px; border: 1px solid #d9e3da; border-radius: 3px; display: grid; place-items: center; margin: 0 auto; }
+	.library-item span { display: none; }
+	.library-item .node-icon { display: grid; place-items: center; margin: 0; }
+	.run-results { display: flex; flex-direction: column; gap: 12px; max-height: none; min-width: 0; overflow-x: hidden; overflow-y: auto; padding: 12px; }
+	.run-results > * { min-width: 0; width: 100%; }
+	.run-results pre { max-width: 100%; box-sizing: border-box; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 130px; }
+}
