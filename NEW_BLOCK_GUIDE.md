@@ -1,12 +1,54 @@
 # Adding a New Workflow Block
 
-This guide explains how to add a new workflow block to Circuit. A block is complete only when it can be created in the editor, saved, validated, executed, inspected, and documented.
+Welcome! This guide walks through adding a new block (a "node type," in the code) to Circuit — one of the drag-and-drop pieces users connect together on the canvas, like "Send Gmail" or "Read Drive file."
 
-The current implementation keeps most frontend editor behavior in `frontend/src/App.tsx` and most backend node behavior in `backend/app/services/node_runners.py`.
+It's long, but only because it's a checklist-style reference, not because the work itself is hard. Once you've added one or two blocks, most of this becomes muscle memory: the same handful of files, in the same order, every time. Read the big picture below first — it'll make the rest click faster.
+
+Two files carry most of the weight: `backend/app/services/node_runners.py` (what the block actually *does*) and `frontend/src/App.tsx` (what the block *looks like* in the editor). Nearly everything else in this guide is wiring those two things together safely.
+
+## The Big Picture
+
+Before diving into files, here's the journey one block config takes, end to end:
+
+```
+1. User drags "Send Slack message" onto the canvas
+        │
+        ▼
+2. Frontend: catalog entry gives it a title/icon; a default config is attached
+   (editorCatalog.ts)
+        │  user fills in fields in the Inspector panel on the right
+        ▼
+3. The whole workflow — every block's config — gets saved as JSON
+   (a workflow document in MongoDB)
+        │  user clicks "Run workflow"
+        ▼
+4. Backend: node.typed_config() parses that raw JSON into a real,
+   validated Pydantic object for this specific block (workflow.py)
+        │
+        ▼
+5. Backend: run_node() looks at the block's type and dispatches to
+   your runner function (node_runners.py)
+        │  the runner resolves any {{template}} values, calls the
+        │  real service (Slack, an LLM, Google Drive...), and returns
+        │  a dict of results
+        ▼
+6. That result is stored under the block's output_key, so any block
+   drawn *after* it on the canvas can reference it as
+   {{your_node_id.output_key}}
+```
+
+A few terms that come up constantly, defined once so they don't feel like jargon later:
+
+- **`output_key`** — the name a block's result is stored under, so other blocks can find it. If a block's output key is `message`, downstream blocks reference it with `{{that_block.message}}`.
+- **`typed_config()`** — the method that turns a node's raw saved JSON config into a real Python object of the right type, with validation. This is how the backend knows a "Send Slack message" node actually *has* a `channel` field.
+- **Template / `{{...}}`** — the `{{block_id.output_key}}` or `{{input.key}}` syntax users type into fields to pull in a value from somewhere else in the workflow. Resolved at run time, checked for validity before that (see "Preflight" below).
+- **Preflight** — a check that runs right before a workflow executes, catching problems (missing connection, empty required field, bad template reference) and showing them to the user *before* anything actually runs.
+
+With that mental model in place, the rest of this guide is really just: "do steps 2, 4, and 5 above, in each of the files where they live."
 
 ## Before You Start
 
-Decide these contracts first:
+A little planning up front saves you from re-touching the same files twice. Decide these things before writing any code:
 
 - Stable block type value, for example `slack_message`.
 - Display title and category.
@@ -37,34 +79,39 @@ The short template form maps to `outputs.<node_id>.<output_key>` at runtime.
 
 ## Required Files
 
-For a normal, non-branching block, update these files:
+Here's the map. For a normal, non-branching block (the vast majority of them), you'll touch these five — they're what makes the block exist at all:
 
-1. `backend/app/models/workflow.py`
-2. `backend/app/services/node_runners.py`
-3. `frontend/src/editorTypes.ts`
-4. `frontend/src/editorCatalog.ts`
-5. `frontend/src/App.tsx`
+| File | What you do there |
+|---|---|
+| `backend/app/models/workflow.py` | Register the block's type name and its config shape |
+| `backend/app/services/node_runners.py` | Write the function that does the actual work |
+| `frontend/src/editorTypes.ts` | Register the block's type name on the frontend too |
+| `frontend/src/editorCatalog.ts` | Give it a title, category, and default config |
+| `frontend/src/App.tsx` | Give it an inspector form so users can configure it |
 
-Usually also update:
+You'll *usually* also touch these:
 
-6. `backend/app/services/workflow_validation.py`
-7. `backend/app/services/api_catalog.py` if the block exposes an API connector
-8. `.env.example` and `README.md` if new environment variables are needed
-9. Tests or a focused regression script
+| File | What you do there |
+|---|---|
+| `backend/app/services/workflow_validation.py` | Catch bad configs before a run starts (preflight) |
+| `backend/app/services/api_catalog.py` | Only if the block wraps a known external API — lets Workflow Copilot describe it accurately |
+| `.env.example` and `README.md` | Only if the block needs a new environment variable |
+| Tests / a focused regression script | Confirm the contract, not just the happy path |
 
-Update these only when the block needs them:
+And these only if the block genuinely needs them — don't reach for them by default:
 
-- `backend/app/repositories/*.py` for new persistence access
-- `backend/app/services/*.py` for OAuth or provider-specific services
-- `backend/app/api/*.py` for new HTTP endpoints
-- `frontend/src/components/*.tsx` for a reusable or large editor component
-- `frontend/src/App.css` or a focused CSS file for custom UI
-- `backend/app/services/workflow_engine.py` for branch, loop, or scheduling behavior
-- `backend/app/services/workflow_copilot.py` for Copilot capability descriptions or deterministic proposals
+- `backend/app/repositories/*.py` — new persistence access
+- `backend/app/services/*.py` — a new OAuth flow or provider-specific service
+- `backend/app/api/*.py` — a new HTTP endpoint
+- `frontend/src/components/*.tsx` — a reusable or large editor component
+- `frontend/src/App.css` (or a focused CSS file) — custom UI
+- `backend/app/services/workflow_engine.py` — only for branch/loop control-flow nodes like `CONDITION`, `FOR_EACH`, `REPEAT_UNTIL`
+- `backend/app/services/scheduler.py` — only for *trigger* behavior. This is a common mix-up: scheduling and event/Drive-watch polling live here, not in `workflow_engine.py`. It decides when a `SCHEDULE` node fires, then calls `run_workflow()` directly (bypassing `validate_run_inputs`, so ad hoc trigger-supplied inputs like `drive_file_id` don't need to be declared workflow inputs)
+- `backend/app/services/workflow_copilot.py` — Copilot's capability description or its deterministic workflow proposals
 
 ## Implementation Order
 
-Use this order so the type contract exists before wiring the UI:
+There's a reason to do these in order rather than jumping straight to the pretty UI part: the backend defines what the block *is*, and the frontend just needs to agree with that definition. Build the backend first and the frontend part goes faster because you're not guessing at a shape that doesn't exist yet.
 
 1. Add the backend node type and config model.
 2. Add the backend runner and dispatch entry.
@@ -77,7 +124,11 @@ Use this order so the type contract exists before wiring the UI:
 9. Add help text.
 10. Add tests and build validation.
 
+The sections below walk through each of these one at a time, using a fictional "Send Slack message" block as a running example.
+
 ## 1. Backend Node Type and Config
+
+This is where the block starts existing, technically speaking — nothing about it works yet, but the system now knows the name and shape of it.
 
 Open `backend/app/models/workflow.py`.
 
@@ -140,6 +191,8 @@ If the block returns multiple named outputs, add those names explicitly and make
 
 ## 2. Backend Runner and Dispatch
 
+The block has a shape now — this is where it actually does something.
+
 Open `backend/app/services/node_runners.py`.
 
 ### Add a runner
@@ -191,7 +244,7 @@ If the block is added to the enum and config model but not this dispatch table, 
 
 ## 3. Credentials and Connections
 
-Choose one of these patterns:
+Skip this section entirely if your block doesn't call anything that needs auth. If it does, pick one of these three patterns rather than inventing a fourth:
 
 ### Per-user secret
 
@@ -220,6 +273,8 @@ If a block supports both per-user and shared credentials, define precedence clea
 3. A clear error if neither exists.
 
 ## 4. Preflight Validation
+
+The backend can now run the block — but "can run" and "gives a good error message when misconfigured" are different things. This is where you add the latter.
 
 Open `backend/app/services/workflow_validation.py`.
 
@@ -252,6 +307,8 @@ The frontend runs preflight before execution and displays blocking errors in the
 
 ## 5. Frontend Type Registration
 
+The backend is fully done at this point. Everything from here on is teaching the editor UI that this block exists.
+
 Open `frontend/src/editorTypes.ts`.
 
 Add the serialized kind to `Kind`:
@@ -266,6 +323,8 @@ export type Kind =
 This keeps node data, catalog entries, proposals, and stored graph types consistent.
 
 ## 6. Frontend Catalog and Defaults
+
+This is what makes the block show up in the library panel on the left, draggable onto the canvas.
 
 Open `frontend/src/editorCatalog.ts`.
 
@@ -294,6 +353,8 @@ slack_message: {
 The default must contain every field the inspector reads. Missing defaults create uncontrolled inputs or undefined runtime configuration.
 
 ## 7. Frontend Inspector Form
+
+The block can be dragged onto the canvas now, but there's nowhere to configure it yet — that's the panel that appears on the right when a node is selected.
 
 Open `frontend/src/App.tsx` and find `NodeForm()`.
 
@@ -339,6 +400,8 @@ Use the existing `Field` wrapper when the field needs Help Mode support. Use `Te
 
 ## 8. Frontend Output Discovery
 
+This step is easy to forget because everything *works* without it — the block runs fine either way. But without it, no one downstream can easily find this block's output to reference it, so it'll look broken even though it isn't.
+
 Find `outputKeys()` in `frontend/src/App.tsx`.
 
 For an `output_key` block, add:
@@ -351,6 +414,8 @@ if (node.data.kind === "slack_message")
 This controls which outputs appear in downstream variable pickers. If this step is missed, the runner may work but users cannot conveniently insert its output.
 
 ## 9. Block Icon, Help, and Copilot
+
+The block is fully functional at this point — this section is the polish that makes it feel like it belongs next to every other block in Circuit.
 
 ### Icon
 
@@ -395,9 +460,17 @@ Update `backend/app/services/workflow_engine.py` only when the block changes con
 - A new branch node.
 - A new loop type.
 - A node that executes a nested graph.
-- Special scheduling or event behavior.
 
 For a branch node, also update connection validation in `App.tsx` so allowed handles are enforced on the canvas.
+
+### Adding a new trigger mode instead of a new block
+
+Not every feature is a new `NodeType`. Adding a way for a workflow to *start* (a new `SCHEDULE` trigger mode, for example) is a different, smaller pattern:
+
+1. Add the new `trigger_mode` value and any supporting config fields to `ScheduleNodeConfig` in `backend/app/models/workflow.py`.
+2. Add a branch in the polling loop in `backend/app/services/scheduler.py` that decides when it fires and calls `run_workflow(workflow, inputs, connections, owner_id)` directly. Any inputs you invent here (e.g. `drive_file_id`) are plain dict keys, not declared `WorkflowInput`s — but if a downstream block should be able to reference them via `{{input.x}}`, add them to the allow-list in `validate_template_references()` in `workflow.py` (see how `drive_file_id`/`drive_file_name`/`drive_file_mime_type` are handled for `drive_watch`), otherwise saving the workflow will fail with "references undeclared input".
+3. Add preflight checks for the new trigger mode's required fields in `workflow_validation.py` (see the `SCHEDULE` node's `continue`-guarded block near the top of the node loop).
+4. Add the UI in `ScheduleForm` in `App.tsx`, and if it should be selectable in the variable picker, extend `variablesFor()` the same way `drive_watch` variables are added.
 
 ## 11. API Catalog and Documentation
 
@@ -466,6 +539,8 @@ $env:PYTHONPATH = "backend"
 
 ## Complete Checklist
 
+A copy-pasteable version of everything above, for a final pass before you call the block done.
+
 ### Backend
 
 - [ ] Added `NodeType` enum value.
@@ -506,6 +581,8 @@ $env:PYTHONPATH = "backend"
 
 ## Common Failure Modes
 
+If something's not working, it's almost certainly one of these — check here before assuming something more exotic is wrong.
+
 ### `Unsupported node type`
 
 The enum/config may exist, but `run_node()` does not dispatch to the runner.
@@ -537,6 +614,8 @@ Check whether credentials are user-scoped, shared through environment variables,
 Check the preflight response. The editor intentionally saves first, then blocks execution when preflight returns errors. The visible editor alert should contain the specific blocker.
 
 ## Design Principles
+
+The rules of thumb behind all of the above — worth internalizing, since they'll settle most judgment calls this guide doesn't explicitly cover:
 
 - Keep the serialized node type stable.
 - Make configuration explicit and validated.
