@@ -1,7 +1,7 @@
 import type { Edge } from "@xyflow/react";
 import type { FlowNode, WorkflowInput } from "./editorTypes";
 
-export type TutorialId = "chat-assistant" | "routing" | "weather-briefing" | "rag-retriever";
+export type TutorialId = "getting-started" | "chat-assistant" | "routing" | "weather-briefing" | "rag-retriever";
 
 export type TutorialContext = {
   inputs: WorkflowInput[];
@@ -82,6 +82,74 @@ const conditionPath = (node: FlowNode | undefined) => {
   if (!node) return "";
   const clauses = node.data.config.conditions as Array<{ input_path?: string }> | undefined;
   return String(clauses?.[0]?.input_path ?? node.data.config.input_path ?? "");
+};
+
+const gettingStarted: Tutorial = {
+  id: "getting-started",
+  title: "Getting started tutorial",
+  workflowName: "Getting Started Tutorial",
+  steps: [
+    {
+      title: "Welcome to the editor",
+      body: "This screen has three panels. On the left is the Block library: every kind of automation step you can use, grouped by category. In the middle is the Canvas, where you arrange blocks and wire them together into a flow. On the right is the Inspector: it appears whenever you select a block and lets you configure that block's settings.\nA workflow is just blocks connected in the order they should run, left to right.",
+      complete: () => true,
+    },
+    {
+      title: "Add your first block",
+      body: "Click any block in the left library (or drag it onto the canvas) to add it. Try adding a Variable block from Core blocks.\nNothing runs yet just by adding it. A block only does something once it is wired into the flow and the workflow is run.",
+      complete: ({ nodes }) => nodes.length > 0,
+    },
+    {
+      title: "The Inspector panel",
+      body: "Click the block you just added. The Inspector on the right now shows a Label field and settings specific to that block type. Rename the Label to something you will recognize later, like 'Greeting'.\nEvery block also has an Output key field (or similar). That key is how other blocks refer to this block's result later, so a clear name here saves confusion downstream.",
+      complete: () => true,
+    },
+    {
+      title: "Add a second block and connect them",
+      body: "Add one more block anywhere on the canvas. Then drag from the small handle on the right edge of your first block to the left edge of the second block to draw a connecting line between them.\nThis connection is not just visual. A block's outputs only become available to insert into a downstream block after they are connected with a line like this one. An unconnected block runs in isolation and cannot see any other block's data.",
+      complete: ({ edges }) => edges.length > 0,
+    },
+    {
+      title: "How variables work",
+      body: "Look at the second block's Inspector. Any text field with a dashed 'Insert variable' button under it can pull in data from upstream. Click it and you will see your first block listed, because you connected it in the last step.\nBehind the scenes this inserts a token like {{block_id.output_key}}. You will see these tokens throughout Circuit. Think of them as 'reach back and grab this value from that earlier block.' If you ever see a variable token underlined or flagged, that means the field is either not spelled correctly or points at a block that is not actually upstream, so check the connection first.",
+      complete: () => true,
+    },
+    {
+      title: "Workflow inputs",
+      body: "Scroll down in the left panel, past the block library, to the Inputs section. This is different from a block: it declares a named value the whole workflow expects to receive from the outside, before any block runs.\nClick the + to add one. Give it a key like customer_name. Inputs are referenced the same way as block outputs, but with the special prefix {{input.customer_name}}, and their value is supplied when the workflow is triggered, either by you (a Run workflow prompt appears whenever a workflow has inputs) or by whatever started the run.",
+      complete: ({ inputs }) => inputs.length > 0,
+    },
+    {
+      title: "How a workflow starts",
+      body: "A workflow can be started three ways: you click Run workflow, a Schedule block fires it on a timer or when a file lands in a watched Drive folder, or an external service calls it as an event. Add a Schedule block from the Triggers category and open its Inspector to see all three Trigger mode options.\nWhichever way it starts, the same blocks run the same way. Only how the workflow begins changes.",
+      complete: ({ nodes }) => nodes.some((node) => node.data.kind === "schedule"),
+    },
+    {
+      title: "Run it and read the results",
+      body: "Click Run workflow in the top-right of the toolbar. If the workflow has inputs, a small dialog asks you to fill them in first, since a run cannot start without the values it depends on.\nAfter it finishes, a results panel opens below the canvas showing each block in the order it ran, what it received, and what it produced. If something fails, the failing block is marked and the error message explains why, right where it happened.",
+      complete: () => true,
+    },
+    {
+      title: "Help Mode",
+      body: "Click the question-mark icon in the top toolbar to turn on Help Mode, then click any field on the canvas or in the Inspector. A short explanation of exactly that field pops up: what it does, when to use it, and an example. Click the question-mark icon again to turn Help Mode back off.\nThis is the fastest way to learn a field you have not used before, without leaving the editor.",
+      complete: () => true,
+    },
+    {
+      title: "The rest of the toolbar",
+      body: "A few more icons worth knowing: the undo arrow reverts your last canvas change. The download icon exports the workflow as a JSON file. The speech-bubble icon opens Workflow Copilot, where you can describe a change in plain English and review a proposed patch before applying it. The chat-lines icon opens the Console, a quick way to test a workflow that is triggered by an external event, like a chat message. Below the canvas, the History button lists every past run of this workflow with its status and trace.",
+      complete: () => true,
+    },
+    {
+      title: "Save your work",
+      body: "Click the save icon in the toolbar (it looks like a floppy disk, next to undo). Circuit does not save automatically. Whatever is saved on the server is what actually runs, whether triggered manually, on a schedule, or by an event, so unsaved canvas changes are invisible to every one of those.",
+      complete: ({ hasSaved }) => hasSaved,
+    },
+    {
+      title: "You're ready",
+      body: "You now know the layout, how blocks connect and share data, how inputs and triggers work, and where to find help along the way. From here, try one of the other guided tutorials on the dashboard, like Chat assistant, to build a complete, working automation using everything you just learned.",
+      complete: () => true,
+    },
+  ],
 };
 
 const chatAssistant: Tutorial = {
@@ -431,11 +499,12 @@ const ragRetriever: Tutorial = {
 };
 
 export const tutorials: Record<TutorialId, Tutorial> = {
+  "getting-started": gettingStarted,
   "chat-assistant": chatAssistant,
   routing,
   "weather-briefing": weatherTutorial,
   "rag-retriever": ragRetriever,
 };
 
-export const isTutorialId = (value: string | null): value is TutorialId => value === "chat-assistant" || value === "routing" || value === "weather-briefing" || value === "rag-retriever";
+export const isTutorialId = (value: string | null): value is TutorialId => value === "getting-started" || value === "chat-assistant" || value === "routing" || value === "weather-briefing" || value === "rag-retriever";
 

@@ -7,6 +7,8 @@ import json
 import math
 import asyncio
 import xml.etree.ElementTree as ET
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any
 from urllib.parse import urlparse, urlunsplit
 
@@ -20,6 +22,8 @@ from ..models.workflow import (
     GitHubRepositoryNodeConfig,
     GoogleDriveNodeConfig,
     GoogleDriveUpdateNodeConfig,
+    GoogleDriveReadNodeConfig,
+    CurrentDateTimeNodeConfig,
     ApiNodeConfig,
     LlmNodeConfig,
     NodeType,
@@ -593,6 +597,33 @@ async def run_google_drive(node: WorkflowNode, context: dict[str, Any], connecti
     return {config.output_key: {"file_id": file_id, "name": values["name"], "status_code": response.status_code}}
 
 
+async def _drive_get_with_refresh(client: httpx.AsyncClient, connections: ConnectionRepository, connection_id: str, owner_id: str, headers: dict[str, str], url: str, params: dict[str, str] | None = None) -> httpx.Response:
+    response = await client.get(url, headers=headers, params=params)
+    if response.status_code == 401:
+        token = await GoogleCalendarOAuth(get_settings()).access_token(connections, connection_id, owner_id, force_refresh=True)
+        headers["Authorization"] = f"Bearer {token}"
+        response = await client.get(url, headers=headers, params=params)
+    return response
+
+
+async def read_drive_file_text(client: httpx.AsyncClient, connections: ConnectionRepository, connection_id: str, owner_id: str, headers: dict[str, str], file_id: str) -> tuple[str, str, str]:
+    """Reads a Drive file's text content, exporting Google-native docs/sheets/slides as needed. Returns (text, mime_type, name)."""
+    metadata = await _drive_get_with_refresh(client, connections, connection_id, owner_id, headers, f"https://www.googleapis.com/drive/v3/files/{file_id}", params={"fields": "mimeType,name"})
+    if metadata.status_code >= 400:
+        raise ValueError(f"Google Drive file lookup failed (HTTP {metadata.status_code}): {metadata.text[:500]}")
+    info = metadata.json()
+    file_mime_type = info.get("mimeType", "")
+    if file_mime_type in GOOGLE_NATIVE_EXPORT_MIME_TYPES:
+        response = await _drive_get_with_refresh(client, connections, connection_id, owner_id, headers, f"https://www.googleapis.com/drive/v3/files/{file_id}/export", params={"mimeType": GOOGLE_NATIVE_EXPORT_MIME_TYPES[file_mime_type]})
+    elif file_mime_type.startswith("application/vnd.google-apps."):
+        raise ValueError(f"Reading isn't supported for this Google file type ({file_mime_type}). Use a plain file, Google Doc, Sheet, or Slide.")
+    else:
+        response = await _drive_get_with_refresh(client, connections, connection_id, owner_id, headers, f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media")
+    if response.status_code >= 400:
+        raise ValueError(f"Google Drive file read failed (HTTP {response.status_code}): {response.text[:500]}")
+    return response.text, file_mime_type, info.get("name", "")
+
+
 async def run_google_drive_update(node: WorkflowNode, context: dict[str, Any], connections: ConnectionRepository | None, owner_id: str | None) -> dict[str, Any]:
     config = node.typed_config()
     assert isinstance(config, GoogleDriveUpdateNodeConfig)
@@ -608,29 +639,8 @@ async def run_google_drive_update(node: WorkflowNode, context: dict[str, Any], c
     headers = {"Authorization": f"Bearer {token}"}
     new_content = str(values["content"])
     async with httpx.AsyncClient(timeout=20.0) as client:
-        async def get_with_refresh(url: str, params: dict[str, str] | None = None) -> httpx.Response:
-            nonlocal token
-            response = await client.get(url, headers=headers, params=params)
-            if response.status_code == 401:
-                token = await GoogleCalendarOAuth(get_settings()).access_token(connections, config.connection_id, owner_id, force_refresh=True)
-                headers["Authorization"] = f"Bearer {token}"
-                response = await client.get(url, headers=headers, params=params)
-            return response
-
         if config.append:
-            metadata = await get_with_refresh(f"https://www.googleapis.com/drive/v3/files/{values['file_id']}", params={"fields": "mimeType"})
-            if metadata.status_code >= 400:
-                raise ValueError(f"Google Drive file lookup failed (HTTP {metadata.status_code}): {metadata.text[:500]}")
-            file_mime_type = metadata.json().get("mimeType", "")
-            if file_mime_type in GOOGLE_NATIVE_EXPORT_MIME_TYPES:
-                existing = await get_with_refresh(f"https://www.googleapis.com/drive/v3/files/{values['file_id']}/export", params={"mimeType": GOOGLE_NATIVE_EXPORT_MIME_TYPES[file_mime_type]})
-            elif file_mime_type.startswith("application/vnd.google-apps."):
-                raise ValueError(f"Append isn't supported for this Google file type ({file_mime_type}). Use a plain file, Google Doc, Sheet, or Slide.")
-            else:
-                existing = await get_with_refresh(f"https://www.googleapis.com/drive/v3/files/{values['file_id']}?alt=media")
-            if existing.status_code >= 400:
-                raise ValueError(f"Google Drive file read failed (HTTP {existing.status_code}): {existing.text[:500]}")
-            existing_text = existing.text
+            existing_text, _, _ = await read_drive_file_text(client, connections, config.connection_id, owner_id, headers, values["file_id"])
             new_content = existing_text if not new_content else existing_text + ("" if not existing_text or existing_text.endswith("\n") else "\n") + new_content
         response = await client.patch(f"https://www.googleapis.com/upload/drive/v3/files/{values['file_id']}?uploadType=media", headers={**headers, "Content-Type": config.mime_type}, content=new_content.encode())
         if response.status_code == 401:
@@ -640,6 +650,51 @@ async def run_google_drive_update(node: WorkflowNode, context: dict[str, Any], c
     if response.status_code >= 400:
         raise ValueError(f"Google Drive file update failed (HTTP {response.status_code}): {response.text[:500]}")
     return {config.output_key: {"file_id": values["file_id"], "status_code": response.status_code}}
+
+
+async def run_google_drive_read(node: WorkflowNode, context: dict[str, Any], connections: ConnectionRepository | None, owner_id: str | None) -> dict[str, Any]:
+    config = node.typed_config()
+    assert isinstance(config, GoogleDriveReadNodeConfig)
+    if not connections or not owner_id:
+        raise ValueError("Google Drive read requires a connected Google Workspace account")
+    values = resolve_template({"file_id": config.file_id}, context)
+    file_id = values["file_id"]
+    if not isinstance(file_id, str) or not file_id.strip():
+        raise ValueError("Google Drive read requires a file ID")
+    connection = await connections.get_document(config.connection_id, owner_id)
+    if not connection or connection.provider != "google_calendar":
+        raise ValueError("Select a valid Google Workspace connection for this node")
+    if not {"https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/drive.file"}.intersection(connection.scopes):
+        raise ValueError("This Google connection does not have Drive permission. Reconnect Google Workspace.")
+    token = await GoogleCalendarOAuth(get_settings()).access_token(connections, config.connection_id, owner_id)
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        text, mime_type, name = await read_drive_file_text(client, connections, config.connection_id, owner_id, headers, file_id)
+    if config.parse_json:
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"Google Drive file '{name or file_id}' could not be parsed as JSON: {error}") from error
+        return {config.output_key: {"file_id": file_id, "name": name, "mime_type": mime_type, "data": data}}
+    return {config.output_key: {"file_id": file_id, "name": name, "mime_type": mime_type, "text": text}}
+
+
+async def run_current_datetime(node: WorkflowNode, context: dict[str, Any]) -> dict[str, Any]:
+    config = node.typed_config()
+    assert isinstance(config, CurrentDateTimeNodeConfig)
+    try:
+        zone = ZoneInfo(config.timezone)
+    except ZoneInfoNotFoundError as error:
+        raise ValueError(f"Unknown timezone '{config.timezone}'") from error
+    now = datetime.now(zone)
+    return {config.output_key: {
+        "iso": now.isoformat(),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M:%S"),
+        "weekday": now.strftime("%A"),
+        "timezone": config.timezone,
+        "unix": int(now.timestamp()),
+    }}
 
 
 async def run_public_connector(node: WorkflowNode, context: dict[str, Any]) -> dict[str, Any]:
@@ -1069,6 +1124,10 @@ async def run_node(node: WorkflowNode, context: dict[str, Any], connections: Con
         return await run_google_drive(node, context, connections, owner_id)
     if node.type == NodeType.GOOGLE_DRIVE_UPDATE:
         return await run_google_drive_update(node, context, connections, owner_id)
+    if node.type == NodeType.GOOGLE_DRIVE_READ:
+        return await run_google_drive_read(node, context, connections, owner_id)
+    if node.type == NodeType.CURRENT_DATETIME:
+        return await run_current_datetime(node, context)
     if node.type in {NodeType.WEATHER_FORECAST, NodeType.NEWS_HEADLINES}:
         return await run_public_connector(node, context)
     if node.type == NodeType.GOOGLE_SHEETS_APPEND:

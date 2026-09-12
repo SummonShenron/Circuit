@@ -4,6 +4,7 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+import httpx
 from pymongo import ReturnDocument
 from dotenv import dotenv_values
 
@@ -15,7 +16,8 @@ from ..repositories.secrets import SecretRepository
 from ..services.secrets import SecretService
 from ..config import get_settings
 from ..services.workflow_engine import run_workflow
-from ..models.workflow import NodeType, ScheduleNodeConfig
+from ..services.google_oauth import GoogleCalendarOAuth
+from ..models.workflow import NodeType, ScheduleNodeConfig, Workflow
 
 logger = logging.getLogger(__name__)
 SCHEDULER_TICK_SECONDS = 15
@@ -105,6 +107,62 @@ def schedule_config(workflow):
     return None
 
 
+async def poll_drive_folder(
+    workflow: Workflow,
+    config: ScheduleNodeConfig,
+    schedule_doc: dict,
+    database: Database,
+    connections: ConnectionRepository,
+    run_history: WorkflowRunRepository,
+) -> None:
+    if not config.drive_connection_id or not config.drive_folder_id:
+        logger.warning("drive watch misconfigured workflow_id=%s", workflow.id)
+        return
+    connection = await connections.get_document(config.drive_connection_id, workflow.owner_id)
+    if not connection or connection.provider != "google_calendar":
+        logger.warning("drive watch connection missing workflow_id=%s", workflow.id)
+        return
+    last_checked = schedule_doc.get("drive_last_checked_at") or (datetime.now(timezone.utc) - timedelta(days=1))
+    if last_checked.tzinfo is None:
+        last_checked = last_checked.replace(tzinfo=timezone.utc)
+    oauth = GoogleCalendarOAuth(get_settings())
+    token = await oauth.access_token(connections, config.drive_connection_id, workflow.owner_id)
+    headers = {"Authorization": f"Bearer {token}"}
+    query_time = last_checked.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    query = f"'{config.drive_folder_id}' in parents and trashed = false and createdTime > '{query_time}'"
+    params = {"q": query, "fields": "files(id,name,mimeType,createdTime)", "orderBy": "createdTime"}
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get("https://www.googleapis.com/drive/v3/files", headers=headers, params=params)
+        if response.status_code == 401:
+            token = await oauth.access_token(connections, config.drive_connection_id, workflow.owner_id, force_refresh=True)
+            headers["Authorization"] = f"Bearer {token}"
+            response = await client.get("https://www.googleapis.com/drive/v3/files", headers=headers, params=params)
+    if response.status_code >= 400:
+        logger.warning("drive watch poll failed workflow_id=%s status=%s body=%s", workflow.id, response.status_code, response.text[:300])
+        return
+    files = response.json().get("files", [])
+    logger.info("drive watch checked workflow_id=%s folder_id=%s since=%s new_files=%s", workflow.id, config.drive_folder_id, query_time, len(files))
+    if not files:
+        return
+    latest_created = last_checked
+    for file in files:
+        created = datetime.fromisoformat(file["createdTime"].replace("Z", "+00:00"))
+        if created > latest_created:
+            latest_created = created
+        inputs = {"drive_file_id": file["id"], "drive_file_name": file.get("name", ""), "drive_file_mime_type": file.get("mimeType", "")}
+        logger.info("drive watch triggering workflow workflow_id=%s file_id=%s", workflow.id, file["id"])
+        try:
+            started_at = datetime.now(timezone.utc)
+            result = await run_workflow(workflow, inputs, connections, workflow.owner_id)
+            await run_history.record(workflow.id, workflow.owner_id, result, started_at, "drive_watch")
+        except Exception:
+            logger.exception("drive watch workflow run failed workflow_id=%s file_id=%s", workflow.id, file["id"])
+    await database.database.workflow_schedules.update_one(
+        {"workflow_id": workflow.id, "owner_id": workflow.owner_id},
+        {"$set": {"drive_last_checked_at": latest_created}},
+    )
+
+
 async def run_scheduler(database: Database) -> None:
     if not database.configured:
         logger.warning("workflow scheduler disabled because MongoDB is not configured")
@@ -120,6 +178,31 @@ async def run_scheduler(database: Database) -> None:
         for workflow in await workflows.list_scheduled():
             config = schedule_config(workflow)
             if not config:
+                continue
+            if config.trigger_mode == "drive_watch":
+                interval = INTERVALS[config.interval]
+                if config.interval == "weekly":
+                    interval = timedelta(weeks=config.weeks_interval)
+                key = f"drive_watch|{config.drive_connection_id}|{config.drive_folder_id}|{config.interval}"
+                existing = await database.database.workflow_schedules.find_one({"workflow_id": workflow.id, "owner_id": workflow.owner_id})
+                if not existing or existing.get("schedule_key") != key:
+                    # New or changed trigger config (including a switch from "schedule" mode): treat as due now
+                    # instead of leaving a stale next_run_at from the previous config in place.
+                    await database.database.workflow_schedules.update_one(
+                        {"workflow_id": workflow.id, "owner_id": workflow.owner_id},
+                        {"$set": {"next_run_at": now, "schedule_key": key, "updated_at": now}, "$setOnInsert": {"workflow_id": workflow.id, "owner_id": workflow.owner_id, "drive_last_checked_at": now}},
+                        upsert=True,
+                    )
+                claim = await database.database.workflow_schedules.find_one_and_update(
+                    {"workflow_id": workflow.id, "owner_id": workflow.owner_id, "next_run_at": {"$lte": now}},
+                    {"$set": {"next_run_at": now + interval, "last_started_at": now, "schedule_key": key, "updated_at": now}},
+                    return_document=ReturnDocument.AFTER,
+                )
+                if claim:
+                    try:
+                        await poll_drive_folder(workflow, config, claim, database, connections, run_history)
+                    except Exception:
+                        logger.exception("drive watch poll failed workflow_id=%s", workflow.id)
                 continue
             if config.trigger_mode != "schedule":
                 continue

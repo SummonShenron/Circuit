@@ -1,6 +1,6 @@
 import type { Node } from "@xyflow/react";
 
-export type Kind = "llm" | "api" | "condition" | "transform" | "variable" | "repeat_until" | "for_each" | "github_repository" | "resend_email" | "google_drive" | "schedule" | "google_drive_update" | "weather_forecast" | "news_headlines" | "google_sheets_append" | "csv_create" | "rss_feed" | "webhook_post" | "http_response" | "mongodb" | "mongodb_vector_search" | "gmail_send" | "reddit_headlines" | "google_calendar" | "github_action" | "job_search" | "erragent" | "file_upload";
+export type Kind = "llm" | "api" | "condition" | "transform" | "variable" | "repeat_until" | "for_each" | "github_repository" | "resend_email" | "google_drive" | "schedule" | "google_drive_update" | "google_drive_read" | "weather_forecast" | "news_headlines" | "google_sheets_append" | "csv_create" | "rss_feed" | "webhook_post" | "http_response" | "mongodb" | "mongodb_vector_search" | "gmail_send" | "reddit_headlines" | "google_calendar" | "github_action" | "job_search" | "erragent" | "file_upload" | "current_datetime";
 export type Status = "idle" | "running" | "completed" | "failed";
 export type Data = { label: string; kind: Kind; config: Record<string, unknown>; status: Status };
 export type FlowNode = Node<Data, "workflow">;

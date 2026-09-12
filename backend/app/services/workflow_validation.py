@@ -13,6 +13,7 @@ from ..models.workflow import (
     GoogleSheetsAppendNodeConfig,
     GoogleDriveNodeConfig,
     GoogleDriveUpdateNodeConfig,
+    GoogleDriveReadNodeConfig,
     GmailSendNodeConfig,
     GoogleCalendarNodeConfig,
     GitHubRepositoryNodeConfig,
@@ -23,6 +24,7 @@ from ..models.workflow import (
     MongoDbNodeConfig,
     MongoVectorSearchNodeConfig,
     FileUploadNodeConfig,
+    CurrentDateTimeNodeConfig,
     TEMPLATE_PATTERN,
 )
 from ..config import get_settings
@@ -78,6 +80,17 @@ async def validate_workflow_preflight(
                     issues.append(PrefightIssue("error", node.id, node.label, f"Unknown schedule timezone '{config.timezone}'"))
                 if config.interval == "weekly" and not config.days_of_week:
                     issues.append(PrefightIssue("warning", node.id, node.label, "Weekly specific-time schedules have no weekday selected; the current weekday will be used"))
+            if isinstance(config, ScheduleNodeConfig) and config.trigger_mode == "drive_watch":
+                if not config.drive_connection_id:
+                    issues.append(PrefightIssue("error", node.id, node.label, "Drive watch requires a Google Workspace connection"))
+                elif connections:
+                    connection = await connections.get_document(config.drive_connection_id, workflow.owner_id)
+                    if not connection or connection.provider != "google_calendar":
+                        issues.append(PrefightIssue("error", node.id, node.label, f"Connection '{config.drive_connection_id}' not found or not accessible"))
+                    elif not {"https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/drive.file"}.intersection(connection.scopes):
+                        issues.append(PrefightIssue("error", node.id, node.label, "This Google connection does not have Drive permission. Reconnect Google Workspace."))
+                if not config.drive_folder_id.strip():
+                    issues.append(PrefightIssue("error", node.id, node.label, "Drive watch requires a folder ID"))
             continue
 
         # Check LLM nodes
@@ -133,6 +146,7 @@ async def validate_workflow_preflight(
             NodeType.GOOGLE_SHEETS_APPEND: GoogleSheetsAppendNodeConfig,
             NodeType.GOOGLE_DRIVE: GoogleDriveNodeConfig,
             NodeType.GOOGLE_DRIVE_UPDATE: GoogleDriveUpdateNodeConfig,
+            NodeType.GOOGLE_DRIVE_READ: GoogleDriveReadNodeConfig,
             NodeType.GMAIL_SEND: GmailSendNodeConfig,
             NodeType.GOOGLE_CALENDAR: GoogleCalendarNodeConfig,
             NodeType.GITHUB_REPOSITORY: GitHubRepositoryNodeConfig,
@@ -254,6 +268,14 @@ async def validate_workflow_preflight(
                     json.loads(config.content)
                 except json.JSONDecodeError as error:
                     issues.append(PrefightIssue("error", node.id, node.label, f"Uploaded file is not valid JSON: {error}"))
+
+        if node.type == NodeType.CURRENT_DATETIME:
+            config = node.typed_config()
+            assert isinstance(config, CurrentDateTimeNodeConfig)
+            try:
+                ZoneInfo(config.timezone)
+            except ZoneInfoNotFoundError:
+                issues.append(PrefightIssue("error", node.id, node.label, f"Unknown timezone '{config.timezone}'"))
 
         # Check secret references
         secret_references = extract_secret_references(node)

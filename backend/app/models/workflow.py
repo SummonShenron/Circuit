@@ -38,6 +38,8 @@ class NodeType(StrEnum):
     MONGODB = "mongodb"
     MONGODB_VECTOR_SEARCH = "mongodb_vector_search"
     FILE_UPLOAD = "file_upload"
+    GOOGLE_DRIVE_READ = "google_drive_read"
+    CURRENT_DATETIME = "current_datetime"
 
 
 class Position(BaseModel):
@@ -167,6 +169,19 @@ class GoogleDriveUpdateNodeConfig(BaseModel):
     connection_id: str = Field(min_length=1)
     output_key: str = "drive_file"
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
+
+
+class GoogleDriveReadNodeConfig(BaseModel):
+    file_id: str = Field(min_length=1)
+    connection_id: str = Field(min_length=1)
+    parse_json: bool = False
+    output_key: str = "drive_file"
+    retry: RetryPolicy = Field(default_factory=RetryPolicy)
+
+
+class CurrentDateTimeNodeConfig(BaseModel):
+    timezone: str = "UTC"
+    output_key: str = "now"
 
 
 class WeatherForecastNodeConfig(BaseModel):
@@ -317,7 +332,7 @@ class ErrAgentNodeConfig(BaseModel):
 
 
 class ScheduleNodeConfig(BaseModel):
-    trigger_mode: Literal["schedule", "event"] = "schedule"
+    trigger_mode: Literal["schedule", "event", "drive_watch"] = "schedule"
     event_name: str = ""
     event_secret: str | None = None
     interval: Literal["5_minutes", "hourly", "daily", "weekly"] = "hourly"
@@ -329,6 +344,8 @@ class ScheduleNodeConfig(BaseModel):
     input_values: dict[str, Any] = Field(default_factory=dict)
     error_handler_node_id: str | None = None
     response_node_id: str | None = None
+    drive_connection_id: str = ""
+    drive_folder_id: str = ""
 
     @field_validator("time_of_day", mode="before")
     @classmethod
@@ -336,7 +353,7 @@ class ScheduleNodeConfig(BaseModel):
         return None if value == "" else value
 
 
-NodeConfig = LlmNodeConfig | ApiNodeConfig | ConditionNodeConfig | TransformNodeConfig | VariableNodeConfig | RepeatUntilNodeConfig | ForEachNodeConfig | GitHubRepositoryNodeConfig | ResendEmailNodeConfig | GoogleDriveNodeConfig | ScheduleNodeConfig | GoogleDriveUpdateNodeConfig | WeatherForecastNodeConfig | NewsHeadlinesNodeConfig | GoogleSheetsAppendNodeConfig | CsvCreateNodeConfig | RssFeedNodeConfig | WebhookPostNodeConfig | HttpResponseNodeConfig | MongoDbNodeConfig | MongoVectorSearchNodeConfig | GmailSendNodeConfig | RedditHeadlinesNodeConfig | GoogleCalendarNodeConfig | GitHubActionNodeConfig | JobSearchNodeConfig | ErrAgentNodeConfig | FileUploadNodeConfig
+NodeConfig = LlmNodeConfig | ApiNodeConfig | ConditionNodeConfig | TransformNodeConfig | VariableNodeConfig | RepeatUntilNodeConfig | ForEachNodeConfig | GitHubRepositoryNodeConfig | ResendEmailNodeConfig | GoogleDriveNodeConfig | ScheduleNodeConfig | GoogleDriveUpdateNodeConfig | GoogleDriveReadNodeConfig | WeatherForecastNodeConfig | NewsHeadlinesNodeConfig | GoogleSheetsAppendNodeConfig | CsvCreateNodeConfig | RssFeedNodeConfig | WebhookPostNodeConfig | HttpResponseNodeConfig | MongoDbNodeConfig | MongoVectorSearchNodeConfig | GmailSendNodeConfig | RedditHeadlinesNodeConfig | GoogleCalendarNodeConfig | GitHubActionNodeConfig | JobSearchNodeConfig | ErrAgentNodeConfig | FileUploadNodeConfig | CurrentDateTimeNodeConfig
 
 
 class WorkflowNode(BaseModel):
@@ -360,6 +377,8 @@ class WorkflowNode(BaseModel):
             NodeType.GOOGLE_DRIVE: GoogleDriveNodeConfig,
             NodeType.SCHEDULE: ScheduleNodeConfig,
             NodeType.GOOGLE_DRIVE_UPDATE: GoogleDriveUpdateNodeConfig,
+            NodeType.GOOGLE_DRIVE_READ: GoogleDriveReadNodeConfig,
+            NodeType.CURRENT_DATETIME: CurrentDateTimeNodeConfig,
             NodeType.WEATHER_FORECAST: WeatherForecastNodeConfig,
             NodeType.NEWS_HEADLINES: NewsHeadlinesNodeConfig,
             NodeType.GOOGLE_SHEETS_APPEND: GoogleSheetsAppendNodeConfig,
@@ -505,6 +524,11 @@ def template_paths(value: Any) -> list[str]:
 def validate_template_references(graph: WorkflowGraph, inputs: list[WorkflowInput]) -> None:
     nodes_by_id = {node.id: node for node in graph.nodes}
     input_keys = {workflow_input.key for workflow_input in inputs}
+    if any(
+        node.type == NodeType.SCHEDULE and node.typed_config().trigger_mode == "drive_watch"
+        for node in graph.nodes
+    ):
+        input_keys |= {"drive_file_id", "drive_file_name", "drive_file_mime_type"}
     body_input_keys = {
         body_node_id: node.typed_config().item_key
         for node in graph.nodes
