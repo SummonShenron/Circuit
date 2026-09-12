@@ -60,6 +60,11 @@ llm = GoogleFlashModel(get_settings())
 
 TEMPLATE_PATTERN = re.compile(r"{{\s*([a-zA-Z_][\w-]*(?:\.[a-zA-Z_][\w-]*)*)\s*}}")
 SKIPPED_REPOSITORY_PATHS = (".env", "secret", "credential", "node_modules/", "vendor/", ".lock", ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip")
+GOOGLE_NATIVE_EXPORT_MIME_TYPES = {
+    "application/vnd.google-apps.document": "text/plain",
+    "application/vnd.google-apps.spreadsheet": "text/csv",
+    "application/vnd.google-apps.presentation": "text/plain",
+}
 
 
 def select_repository_paths(tree: list[dict[str, Any]], max_files: int) -> list[str]:
@@ -600,8 +605,38 @@ async def run_google_drive_update(node: WorkflowNode, context: dict[str, Any], c
     if not {"https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/drive.file"}.intersection(connection.scopes):
         raise ValueError("This Google connection does not have Drive permission. Reconnect Google Workspace.")
     token = await GoogleCalendarOAuth(get_settings()).access_token(connections, config.connection_id, owner_id)
+    headers = {"Authorization": f"Bearer {token}"}
+    new_content = str(values["content"])
     async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.patch(f"https://www.googleapis.com/upload/drive/v3/files/{values['file_id']}?uploadType=media", headers={"Authorization": f"Bearer {token}", "Content-Type": config.mime_type}, content=str(values["content"]).encode())
+        async def get_with_refresh(url: str, params: dict[str, str] | None = None) -> httpx.Response:
+            nonlocal token
+            response = await client.get(url, headers=headers, params=params)
+            if response.status_code == 401:
+                token = await GoogleCalendarOAuth(get_settings()).access_token(connections, config.connection_id, owner_id, force_refresh=True)
+                headers["Authorization"] = f"Bearer {token}"
+                response = await client.get(url, headers=headers, params=params)
+            return response
+
+        if config.append:
+            metadata = await get_with_refresh(f"https://www.googleapis.com/drive/v3/files/{values['file_id']}", params={"fields": "mimeType"})
+            if metadata.status_code >= 400:
+                raise ValueError(f"Google Drive file lookup failed (HTTP {metadata.status_code}): {metadata.text[:500]}")
+            file_mime_type = metadata.json().get("mimeType", "")
+            if file_mime_type in GOOGLE_NATIVE_EXPORT_MIME_TYPES:
+                existing = await get_with_refresh(f"https://www.googleapis.com/drive/v3/files/{values['file_id']}/export", params={"mimeType": GOOGLE_NATIVE_EXPORT_MIME_TYPES[file_mime_type]})
+            elif file_mime_type.startswith("application/vnd.google-apps."):
+                raise ValueError(f"Append isn't supported for this Google file type ({file_mime_type}). Use a plain file, Google Doc, Sheet, or Slide.")
+            else:
+                existing = await get_with_refresh(f"https://www.googleapis.com/drive/v3/files/{values['file_id']}?alt=media")
+            if existing.status_code >= 400:
+                raise ValueError(f"Google Drive file read failed (HTTP {existing.status_code}): {existing.text[:500]}")
+            existing_text = existing.text
+            new_content = existing_text if not new_content else existing_text + ("" if not existing_text or existing_text.endswith("\n") else "\n") + new_content
+        response = await client.patch(f"https://www.googleapis.com/upload/drive/v3/files/{values['file_id']}?uploadType=media", headers={**headers, "Content-Type": config.mime_type}, content=new_content.encode())
+        if response.status_code == 401:
+            token = await GoogleCalendarOAuth(get_settings()).access_token(connections, config.connection_id, owner_id, force_refresh=True)
+            headers["Authorization"] = f"Bearer {token}"
+            response = await client.patch(f"https://www.googleapis.com/upload/drive/v3/files/{values['file_id']}?uploadType=media", headers={**headers, "Content-Type": config.mime_type}, content=new_content.encode())
     if response.status_code >= 400:
         raise ValueError(f"Google Drive file update failed (HTTP {response.status_code}): {response.text[:500]}")
     return {config.output_key: {"file_id": values["file_id"], "status_code": response.status_code}}

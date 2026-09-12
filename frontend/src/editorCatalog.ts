@@ -40,7 +40,7 @@ export const configs: Record<Kind, Record<string, unknown>> = {
   github_repository: { owner: "", repository: "", connection_id: "", operation: "repository_context", search_query: "", search_limit: 10, include_readme: true, auto_select_files: true, include_paths: ["package.json", "pyproject.toml"], max_files: 12, max_chars: 40000, output_key: "repository_context" },
   resend_email: { from_email: "Patchy <patchy@sonicassistant.com>", to: "", subject: "", body: "", body_type: "text", output_key: "email_response" },
   google_drive: { name: "", content: "", mime_type: "text/plain", folder_id: "", file_id: "", connection_id: "", output_key: "drive_file" },
-  google_drive_update: { file_id: "", content: "", mime_type: "text/plain", connection_id: "", output_key: "drive_file" },
+  google_drive_update: { file_id: "", content: "", mime_type: "text/plain", append: false, connection_id: "", output_key: "drive_file" },
   weather_forecast: { output_key: "weather", user_agent: "Circuit workflow builder" },
   news_headlines: { limit: 5, output_key: "news", user_agent: "Circuit workflow builder/1.0" },
   google_sheets_append: { spreadsheet_id: "", range_name: "Sheet1!A:Z", values: [], connection_id: "", output_key: "sheet_append" },

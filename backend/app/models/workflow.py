@@ -163,6 +163,7 @@ class GoogleDriveUpdateNodeConfig(BaseModel):
     file_id: str = Field(min_length=1)
     content: str = ""
     mime_type: str = "text/plain"
+    append: bool = False
     connection_id: str = Field(min_length=1)
     output_key: str = "drive_file"
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
